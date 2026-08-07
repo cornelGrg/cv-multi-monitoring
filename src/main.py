@@ -27,7 +27,37 @@ def load_config(path: str | Path) -> dict:
     if not p.exists():
         raise FileNotFoundError(f"Config not found: {p}")
     with p.open() as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    # Load camera configs dynamically if directory is specified
+    if "cameras_config_dir" in config:
+        cam_dir = p.parent.parent / config["cameras_config_dir"]
+        streams = []
+        if cam_dir.exists():
+            for cam_file in sorted(cam_dir.glob("*.yaml")):
+                with cam_file.open() as cf:
+                    streams.append(yaml.safe_load(cf))
+        config["streams"] = streams
+        
+    # Load manifest if specified (overrides cameras_config_dir)
+    if "manifest_file" in config:
+        manifest_path = p.parent.parent / config["manifest_file"]
+        if manifest_path.exists():
+            with manifest_path.open() as mf:
+                manifest_data = yaml.safe_load(mf)
+                config["streams"] = manifest_data.get("cameras", [])
+                
+                # Map video_path to path for compatibility
+                for stream in config["streams"]:
+                    if "video_path" in stream and "path" not in stream:
+                        stream["path"] = stream["video_path"]
+                        
+                if "dataset" in manifest_data and "source_fps" in manifest_data["dataset"]:
+                    if "pipeline" not in config:
+                        config["pipeline"] = {}
+                    config["pipeline"]["source_fps"] = manifest_data["dataset"]["source_fps"]
+
+    return config
 
 
 def setup_logging(level: str = "INFO") -> None:

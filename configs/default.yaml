@@ -19,15 +19,8 @@ pipeline:
   frame_drop_policy: "latest"   # "latest" = drop oldest frame when queue full
   warmup_batches: 3
 
-streams:
-  - camera_id: "cam_01"
-    path: "data/videos/stream1.mp4"
-  - camera_id: "cam_02"
-    path: "data/videos/stream2.mp4"
-  - camera_id: "cam_03"
-    path: "data/videos/stream3.mp4"
-  - camera_id: "cam_04"
-    path: "data/videos/stream4.mp4"
+# cameras_config_dir: "configs/cameras/"
+manifest_file: "data/manifests/ua_detrac_selected.yaml"
 
 output:
   metrics_file: "outputs/metrics.json"

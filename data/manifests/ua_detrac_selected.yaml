@@ -1,0 +1,33 @@
+dataset:
+  name: UA-DETRAC
+  source_fps: 25
+  stream_relationship: independent_sequences
+  notes: >
+    These sequences are used as independent traffic-camera inputs.
+    They are not synchronized views of the same road network.
+
+cameras:
+  - camera_id: cam_01
+    sequence_id: MVI_20011
+    video_path: data/processed/videos/cam_01.mp4
+    annotation_path: data/raw/ua_detrac/annotations/MVI_20011.xml
+    scenario: unclassified
+
+  - camera_id: cam_02
+    sequence_id: MVI_20012
+    video_path: data/processed/videos/cam_02.mp4
+    annotation_path: data/raw/ua_detrac/annotations/MVI_20012.xml
+    scenario: unclassified
+
+  - camera_id: cam_03
+    sequence_id: MVI_20032
+    video_path: data/processed/videos/cam_03.mp4
+    annotation_path: data/raw/ua_detrac/annotations/MVI_20032.xml
+    scenario: unclassified
+
+  - camera_id: cam_04
+    sequence_id: MVI_20052
+    video_path: data/processed/videos/cam_04.mp4
+    annotation_path: data/raw/ua_detrac/annotations/MVI_20052.xml
+    scenario: unclassified
+

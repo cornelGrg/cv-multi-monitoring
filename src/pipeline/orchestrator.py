@@ -64,10 +64,11 @@ class PipelineOrchestrator:
         self._queues: list[queue.Queue] = []
         self._camera_ids: list[str] = []
 
-        pipeline_cfg = config["pipeline"]
-        self._queue_maxsize: int = pipeline_cfg["queue_maxsize"]
-        self._max_frames: int = pipeline_cfg["max_frames_per_stream"]
-        self._drop_policy: str = pipeline_cfg["frame_drop_policy"]
+        pipeline_cfg = config.get("pipeline", {})
+        self._queue_maxsize: int = pipeline_cfg.get("queue_maxsize", 10)
+        self._max_frames: int = pipeline_cfg.get("max_frames_per_stream", 0)
+        self._drop_policy: str = pipeline_cfg.get("frame_drop_policy", "latest")
+        self._source_fps: float | None = pipeline_cfg.get("source_fps", None)
         self._conf_threshold: float = config["model"]["confidence_threshold"]
         self._input_size: int = config["model"]["input_size"]
         self._batch_size: int = config["inference"]["batch_size"]
@@ -90,6 +91,7 @@ class PipelineOrchestrator:
                 input_size=self._input_size,
                 max_frames=self._max_frames,
                 drop_policy=self._drop_policy,
+                source_fps=self._source_fps,
             )
 
             self._queues.append(q)

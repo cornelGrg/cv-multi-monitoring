@@ -3,15 +3,15 @@
     "total_frames_inferred": 600,
     "total_batches": 150,
     "total_detections": 232,
-    "elapsed_s": 7.0858,
-    "fps_global": 84.68,
-    "fps_per_camera": 21.17,
-    "inference_time_avg_ms": 41.77,
-    "inference_time_p95_ms": 43.46,
-    "latency_e2e_p50_ms": 557.55,
-    "latency_e2e_p95_ms": 571.42,
-    "queue_wait_avg_ms": 494.66,
-    "vram_used_mb": 936.0,
+    "elapsed_s": 6.9768,
+    "fps_global": 86.0,
+    "fps_per_camera": 21.5,
+    "inference_time_avg_ms": 41.59,
+    "inference_time_p95_ms": 42.92,
+    "latency_e2e_p50_ms": 556.42,
+    "latency_e2e_p95_ms": 561.73,
+    "queue_wait_avg_ms": 497.57,
+    "vram_used_mb": 949.0,
     "num_cameras": 4
   },
   "per_camera": {
@@ -20,7 +20,7 @@
       "frames_inferred": 150,
       "frames_dropped": 0,
       "read_errors": 0,
-      "queue_size_avg": 8.7,
+      "queue_size_avg": 8.76,
       "queue_size_max": 9
     },
     "sim_02": {
@@ -28,7 +28,7 @@
       "frames_inferred": 150,
       "frames_dropped": 0,
       "read_errors": 0,
-      "queue_size_avg": 8.726666666666667,
+      "queue_size_avg": 8.76,
       "queue_size_max": 9
     },
     "sim_03": {
@@ -36,7 +36,7 @@
       "frames_inferred": 150,
       "frames_dropped": 0,
       "read_errors": 0,
-      "queue_size_avg": 8.713333333333333,
+      "queue_size_avg": 8.76,
       "queue_size_max": 9
     },
     "sim_04": {
@@ -44,7 +44,7 @@
       "frames_inferred": 150,
       "frames_dropped": 0,
       "read_errors": 0,
-      "queue_size_avg": 8.686666666666667,
+      "queue_size_avg": 8.76,
       "queue_size_max": 9
     }
   }

@@ -195,17 +195,32 @@ class MetricsCollector:
         vram = self._get_vram_mb()
 
         per_cam = {}
+        total_captured = 0
+        total_dropped = 0
+        
         for cid in self.camera_ids:
             cam = self.per_camera[cid]
             qs = self._queue_sizes.get(cid, [])
+            
+            captured = cam.frames_captured
+            dropped = cam.frames_dropped
+            total_captured += captured
+            total_dropped += dropped
+            
+            drop_rate_pct = (dropped / captured * 100.0) if captured > 0 else 0.0
+            
             per_cam[cid] = {
-                "frames_captured": cam.frames_captured,
+                "frames_captured": captured,
                 "frames_inferred": cam.frames_inferred,
-                "frames_dropped": cam.frames_dropped,
+                "frames_dropped": dropped,
+                "drop_rate_pct": round(drop_rate_pct, 2),
                 "read_errors": cam.read_errors,
                 "queue_size_avg": float(np.mean(qs)) if qs else 0.0,
                 "queue_size_max": int(np.max(qs)) if qs else 0,
             }
+            
+        global_drop_rate = (total_dropped / total_captured * 100.0) if total_captured > 0 else 0.0
+        input_fps = total_captured / self.elapsed_s if self.elapsed_s > 0 else 0.0
 
         return {
             "global": {
@@ -213,8 +228,10 @@ class MetricsCollector:
                 "total_batches": self.total_batches,
                 "total_detections": self.total_detections,
                 "elapsed_s": round(self.elapsed_s, 4),
+                "fps_input_global": round(input_fps, 2),
                 "fps_global": round(self.global_fps, 2),
                 "fps_per_camera": round(self.per_camera_fps, 2),
+                "global_drop_rate_pct": round(global_drop_rate, 2),
                 "inference_time_avg_ms": round(self._inference_times.mean * 1000, 2),
                 "inference_time_p95_ms": round(self._inference_times.percentile(95) * 1000, 2),
                 "latency_e2e_p50_ms": round(self._e2e_latencies.percentile(50) * 1000, 2),
@@ -248,35 +265,34 @@ class MetricsCollector:
         print()
         print("| Global Metric                  | Value               |")
         print("|:-------------------------------|:--------------------|")
-        print(f"| Cameras                        | {g['num_cameras']}                   |")
-        print(f"| Total frames inferred          | {g['total_frames_inferred']:<20}|")
-        print(f"| Total batches                  | {g['total_batches']:<20}|")
-        print(f"| Total detections               | {g['total_detections']:<20}|")
-        print(f"| Elapsed time                   | {g['elapsed_s']:.2f} s{'':<14}|")
-        print(f"| **FPS global**                 | **{g['fps_global']:.2f}**{'':<14}|")
-        print(f"| **FPS per camera**             | **{g['fps_per_camera']:.2f}**{'':<14}|")
-        print(f"| Inference time (avg)           | {g['inference_time_avg_ms']:.2f} ms{'':<12}|")
-        print(f"| Inference time (p95)           | {g['inference_time_p95_ms']:.2f} ms{'':<12}|")
-        print(f"| Latency e2e (p50)              | {g['latency_e2e_p50_ms']:.2f} ms{'':<12}|")
-        print(f"| Latency e2e (p95)              | {g['latency_e2e_p95_ms']:.2f} ms{'':<12}|")
-        print(f"| Queue wait (avg)               | {g['queue_wait_avg_ms']:.2f} ms{'':<12}|")
-        vram_str = f"{g['vram_used_mb']:.0f} MB" if g['vram_used_mb'] is not None else "N/A"
-        print(f"| VRAM used                      | {vram_str:<20}|")
+        print(f"| Cameras                        | {g['num_cameras']:<20} |")
+        print(f"| Total frames inferred          | {g['total_frames_inferred']:<20} |")
+        print(f"| Total batches                  | {g['total_batches']:<20} |")
+        print(f"| Total detections               | {g['total_detections']:<20} |")
+        print(f"| Elapsed time                   | {g['elapsed_s']:.2f} s{'':<14} |")
+        print(f"| **FPS input (global)**         | **{g['fps_input_global']:.2f}**{'':<13} |")
+        print(f"| **FPS output (global)**        | **{g['fps_global']:.2f}**{'':<13} |")
+        print(f"| **FPS output per camera**      | **{g['fps_per_camera']:.2f}**{'':<13} |")
+        print(f"| **Global Drop Rate**           | **{g['global_drop_rate_pct']:.2f}%**{'':<12} |")
+        print(f"| Inference time (avg)           | {g['inference_time_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Inference time (p95)           | {g['inference_time_p95_ms']:.2f} ms{'':<11} |")
+        print(f"| Latency e2e (p50)              | {g['latency_e2e_p50_ms']:.2f} ms{'':<11} |")
+        print(f"| Latency e2e (p95)              | {g['latency_e2e_p95_ms']:.2f} ms{'':<11} |")
+        print(f"| Queue wait (avg)               | {g['queue_wait_avg_ms']:.2f} ms{'':<11} |")
+        v = f"{g['vram_used_mb']:.0f} MB" if g["vram_used_mb"] is not None else "N/A"
+        print(f"| VRAM used                      | {v:<20} |")
         print()
-
-        # Per-camera table
-        print("| Camera   | Captured | Inferred | Dropped | Errors | Q avg | Q max |")
-        print("|:---------|:---------|:---------|:--------|:-------|:------|:------|")
-        for cid, cm in d["per_camera"].items():
+        print("| Camera   | Captured | Inferred | Drop % | Errors | Q avg | Q max |")
+        print("|:---------|:---------|:---------|:-------|:-------|:------|:------|")
+        for cid, cam in d["per_camera"].items():
             print(
-                f"| {cid:<8s} "
-                f"| {cm['frames_captured']:<8} "
-                f"| {cm['frames_inferred']:<8} "
-                f"| {cm['frames_dropped']:<7} "
-                f"| {cm['read_errors']:<6} "
-                f"| {cm['queue_size_avg']:.1f}{'':>3} "
-                f"| {cm['queue_size_max']:<5} |"
+                f"| {cid:<8} | "
+                f"{cam['frames_captured']:<8} | "
+                f"{cam['frames_inferred']:<8} | "
+                f"{cam['drop_rate_pct']:>5.1f}% | "
+                f"{cam['read_errors']:<6} | "
+                f"{cam['queue_size_avg']:<5.1f} | "
+                f"{cam['queue_size_max']:<5} |"
             )
-
         print()
         print("=" * 72)

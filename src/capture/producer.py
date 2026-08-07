@@ -93,6 +93,7 @@ class VideoProducer(threading.Thread):
         input_size: int = 640,
         max_frames: int = 0,
         drop_policy: str = "latest",
+        source_fps: float | None = None,
     ) -> None:
         super().__init__(daemon=True, name=f"Producer-{camera_id}")
         self.camera_id = camera_id
@@ -101,6 +102,7 @@ class VideoProducer(threading.Thread):
         self.input_size = input_size
         self.max_frames = max_frames
         self.drop_policy = drop_policy
+        self.source_fps = source_fps
 
         self._stop_event = threading.Event()
         self.stats = CameraStats(camera_id=camera_id)
@@ -121,9 +123,18 @@ class VideoProducer(threading.Thread):
         consecutive_errors = 0
         frame_idx = 0
         limit = self.max_frames if self.max_frames > 0 else float("inf")
+        
+        target_frame_time = 1.0 / self.source_fps if self.source_fps and self.source_fps > 0 else 0
+        next_frame_time = time.perf_counter()
 
         try:
             while frame_idx < limit and not self._stop_event.is_set():
+                if target_frame_time > 0:
+                    now = time.perf_counter()
+                    if now < next_frame_time:
+                        time.sleep(next_frame_time - now)
+                    next_frame_time = time.perf_counter() + target_frame_time
+
                 ret, frame = cap.read()
                 if not ret:
                     # End of video
