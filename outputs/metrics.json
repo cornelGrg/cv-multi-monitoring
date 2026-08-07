@@ -1,0 +1,51 @@
+{
+  "global": {
+    "total_frames_inferred": 224,
+    "total_batches": 56,
+    "total_detections": 92,
+    "elapsed_s": 3.1284,
+    "fps_global": 71.6,
+    "fps_per_camera": 17.9,
+    "inference_time_avg_ms": 49.92,
+    "inference_time_p95_ms": 54.56,
+    "latency_e2e_p50_ms": 135.16,
+    "latency_e2e_p95_ms": 374.64,
+    "queue_wait_avg_ms": 108.92,
+    "vram_used_mb": 936.0,
+    "num_cameras": 4
+  },
+  "per_camera": {
+    "cam_01": {
+      "frames_captured": 377,
+      "frames_inferred": 56,
+      "frames_dropped": 321,
+      "read_errors": 0,
+      "queue_size_avg": 8.357142857142858,
+      "queue_size_max": 9
+    },
+    "cam_02": {
+      "frames_captured": 377,
+      "frames_inferred": 56,
+      "frames_dropped": 321,
+      "read_errors": 0,
+      "queue_size_avg": 8.357142857142858,
+      "queue_size_max": 9
+    },
+    "cam_03": {
+      "frames_captured": 377,
+      "frames_inferred": 56,
+      "frames_dropped": 321,
+      "read_errors": 0,
+      "queue_size_avg": 8.357142857142858,
+      "queue_size_max": 9
+    },
+    "cam_04": {
+      "frames_captured": 377,
+      "frames_inferred": 56,
+      "frames_dropped": 321,
+      "read_errors": 0,
+      "queue_size_avg": 8.357142857142858,
+      "queue_size_max": 9
+    }
+  }
+}
