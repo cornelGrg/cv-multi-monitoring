@@ -1,0 +1,44 @@
+# Controlled benchmark B: detector + ByteTrack compute path.
+# Video and tracks.csv are disabled so the only changed stage is tracking.
+
+model:
+  path: "models/yolo26m.onnx"
+  input_size: 640
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+
+inference:
+  provider: "CUDAExecutionProvider"
+  require_provider: true
+  device_id: 0
+  batch_size: 4
+
+pipeline:
+  queue_maxsize: 10
+  max_frames_per_stream: 0
+  frame_drop_policy: "latest"
+  warmup_batches: 3
+  source_fps: 25.0
+  loop_video: true
+  max_duration_s: 60.0
+  allowed_classes: [2, 3, 5, 7]
+  audit_frames: 0
+
+tracking:
+  enabled: true
+  tracker_type: "bytetrack"
+  frame_rate: 25.0
+  track_buffer: 30
+  track_high_thresh: 0.25
+  track_low_thresh: 0.1
+  new_track_thresh: 0.25
+  match_thresh: 0.8
+  fuse_score: true
+  write_annotated_video: false
+  write_tracks_csv: false
+
+manifest_file: "data/manifests/ua_detrac_selected.yaml"
+
+output:
+  metrics_file: "outputs/controlled_benchmarks/tracking_compute_latest.json"
+  log_level: "INFO"

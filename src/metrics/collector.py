@@ -81,11 +81,15 @@ class MetricsCollector:
         self.total_frames_inferred: int = 0
         self.total_batches: int = 0
         self.total_detections: int = 0
+        self.total_track_observations: int = 0
 
         # Timing accumulators
         self._inference_times = _LatencyBucket()
         self._e2e_latencies = _LatencyBucket()
         self._queue_waits = _LatencyBucket()
+        self._tracking_times = _LatencyBucket()
+        self._output_times = _LatencyBucket()
+        self._batch_sizes: list[int] = []
         self._queue_sizes: dict[str, list[int]] = {cid: [] for cid in camera_ids}
 
         # Wall-clock bookkeeping
@@ -107,6 +111,7 @@ class MetricsCollector:
         capture_times_ns: list[int],
         dequeue_times_ns: list[int],
         detections: int,
+        true_batch_size: int = 4,
     ) -> None:
         """Record metrics for one completed batch.
 
@@ -144,10 +149,21 @@ class MetricsCollector:
 
             self.total_frames_inferred += 1
 
+        self._batch_sizes.append(true_batch_size)
+
     def record_queue_size(self, camera_id: str, size: int) -> None:
         """Snapshot current queue size for a camera."""
         if camera_id in self._queue_sizes:
             self._queue_sizes[camera_id].append(size)
+
+    def record_tracking_time(self, duration_s: float, track_observations: int = 0) -> None:
+        """Record tracker update time for one inferred source frame."""
+        self._tracking_times.add(duration_s)
+        self.total_track_observations += track_observations
+
+    def record_output_time(self, duration_s: float) -> None:
+        """Record CSV plus annotated-video output time for one source frame."""
+        self._output_times.add(duration_s)
 
     def sync_producer_stats(self, camera_id: str, captured: int, dropped: int, errors: int) -> None:
         """Copy final counters from a VideoProducer into per-camera metrics."""
@@ -197,18 +213,18 @@ class MetricsCollector:
         per_cam = {}
         total_captured = 0
         total_dropped = 0
-        
+
         for cid in self.camera_ids:
             cam = self.per_camera[cid]
             qs = self._queue_sizes.get(cid, [])
-            
+
             captured = cam.frames_captured
             dropped = cam.frames_dropped
             total_captured += captured
             total_dropped += dropped
-            
+
             drop_rate_pct = (dropped / captured * 100.0) if captured > 0 else 0.0
-            
+
             per_cam[cid] = {
                 "frames_captured": captured,
                 "frames_inferred": cam.frames_inferred,
@@ -218,7 +234,7 @@ class MetricsCollector:
                 "queue_size_avg": float(np.mean(qs)) if qs else 0.0,
                 "queue_size_max": int(np.max(qs)) if qs else 0,
             }
-            
+
         global_drop_rate = (total_dropped / total_captured * 100.0) if total_captured > 0 else 0.0
         input_fps = total_captured / self.elapsed_s if self.elapsed_s > 0 else 0.0
 
@@ -227,6 +243,8 @@ class MetricsCollector:
                 "total_frames_inferred": self.total_frames_inferred,
                 "total_batches": self.total_batches,
                 "total_detections": self.total_detections,
+                "total_track_observations": self.total_track_observations,
+                "batch_size_hist": {str(k): self._batch_sizes.count(k) for k in sorted(set(self._batch_sizes))} if self._batch_sizes else {},
                 "elapsed_s": round(self.elapsed_s, 4),
                 "fps_input_global": round(input_fps, 2),
                 "fps_global": round(self.global_fps, 2),
@@ -237,6 +255,10 @@ class MetricsCollector:
                 "latency_e2e_p50_ms": round(self._e2e_latencies.percentile(50) * 1000, 2),
                 "latency_e2e_p95_ms": round(self._e2e_latencies.percentile(95) * 1000, 2),
                 "queue_wait_avg_ms": round(self._queue_waits.mean * 1000, 2),
+                "tracking_time_avg_ms": round(self._tracking_times.mean * 1000, 2),
+                "tracking_time_p95_ms": round(self._tracking_times.percentile(95) * 1000, 2),
+                "output_time_avg_ms": round(self._output_times.mean * 1000, 2),
+                "output_time_p95_ms": round(self._output_times.percentile(95) * 1000, 2),
                 "vram_used_mb": vram,
                 "num_cameras": len(self.camera_ids),
             },
@@ -269,7 +291,10 @@ class MetricsCollector:
         print(f"| Total frames inferred          | {g['total_frames_inferred']:<20} |")
         print(f"| Total batches                  | {g['total_batches']:<20} |")
         print(f"| Total detections               | {g['total_detections']:<20} |")
-        print(f"| Elapsed time                   | {g['elapsed_s']:.2f} s{'':<14} |")
+        print(f"| Total track observations       | {g['total_track_observations']:<20} |")
+        print(f"| Elapsed time (active)          | {g['elapsed_s']:.2f} s{'':<14} |")
+        hist_str = ", ".join(f"sz{k}:{v}" for k, v in g.get('batch_size_hist', {}).items())
+        print(f"| Batch size histogram           | {hist_str:<20} |")
         print(f"| **FPS input (global)**         | **{g['fps_input_global']:.2f}**{'':<13} |")
         print(f"| **FPS output (global)**        | **{g['fps_global']:.2f}**{'':<13} |")
         print(f"| **FPS output per camera**      | **{g['fps_per_camera']:.2f}**{'':<13} |")
@@ -279,6 +304,10 @@ class MetricsCollector:
         print(f"| Latency e2e (p50)              | {g['latency_e2e_p50_ms']:.2f} ms{'':<11} |")
         print(f"| Latency e2e (p95)              | {g['latency_e2e_p95_ms']:.2f} ms{'':<11} |")
         print(f"| Queue wait (avg)               | {g['queue_wait_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Tracking time (avg)            | {g['tracking_time_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Tracking time (p95)            | {g['tracking_time_p95_ms']:.2f} ms{'':<11} |")
+        print(f"| Output time (avg)              | {g['output_time_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Output time (p95)              | {g['output_time_p95_ms']:.2f} ms{'':<11} |")
         v = f"{g['vram_used_mb']:.0f} MB" if g["vram_used_mb"] is not None else "N/A"
         print(f"| VRAM used                      | {v:<20} |")
         print()

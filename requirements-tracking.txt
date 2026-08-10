@@ -1,0 +1,3 @@
+# Phase 3 ByteTrack runtime. Install after the project's base dependencies.
+ultralytics>=8.4.115
+lap>=0.5.12

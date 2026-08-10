@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# cv-multi-monitoring — Benchmark Configuration (Phase 2.1)
+# Constant-Load Realtime Benchmark
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  path: "models/yolo26m.onnx"
+  input_size: 640
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+
+inference:
+  provider: "CUDAExecutionProvider"
+  device_id: 0
+  batch_size: 4
+
+pipeline:
+  queue_maxsize: 10
+  max_frames_per_stream: 0
+  frame_drop_policy: "latest"
+  warmup_batches: 3
+  
+  # Phase 2.1 specific features
+  source_fps: 25.0
+  loop_video: true
+  max_duration_s: 60.0
+  allowed_classes: [2, 3, 5, 7]  # car, motorcycle, bus, truck
+  audit_frames: 100              # Generate annotated video for the first 100 frames
+
+manifest_file: "data/manifests/ua_detrac_selected.yaml"
+
+output:
+  metrics_file: "outputs/benchmark_metrics.json"
+  log_level: "INFO"

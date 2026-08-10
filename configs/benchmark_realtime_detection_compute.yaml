@@ -1,0 +1,34 @@
+# Controlled benchmark A: detector compute path only.
+# No audit video, tracking, CSV or annotated output.
+
+model:
+  path: "models/yolo26m.onnx"
+  input_size: 640
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+
+inference:
+  provider: "CUDAExecutionProvider"
+  require_provider: true
+  device_id: 0
+  batch_size: 4
+
+pipeline:
+  queue_maxsize: 10
+  max_frames_per_stream: 0
+  frame_drop_policy: "latest"
+  warmup_batches: 3
+  source_fps: 25.0
+  loop_video: true
+  max_duration_s: 60.0
+  allowed_classes: [2, 3, 5, 7]
+  audit_frames: 0
+
+tracking:
+  enabled: false
+
+manifest_file: "data/manifests/ua_detrac_selected.yaml"
+
+output:
+  metrics_file: "outputs/controlled_benchmarks/detection_compute_latest.json"
+  log_level: "INFO"

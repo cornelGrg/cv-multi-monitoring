@@ -1,8 +1,8 @@
-# Roadmap — Multi-Camera Real-Time Traffic Analytics Pipeline
+# Roadmap v2 — Multi-Camera Real-Time Traffic Analytics Pipeline
 
 ## 1. Obiettivo del progetto
 
-Trasformare l’attuale prototipo di inferenza YOLO in un progetto portfolio-ready di **video analytics per il traffico urbano**, con pipeline concorrente, inferenza GPU batchata, tracking multi-oggetto, conteggio direzionale e benchmark riproducibili.
+Trasformare il prototipo YOLO in un progetto portfolio-ready di **traffic video analytics**: una pipeline concorrente che acquisisce più flussi, esegue inferenza GPU batchata, traccia veicoli per camera, conta attraversamenti direzionali e produce benchmark riproducibili.
 
 Titolo finale:
 
@@ -12,232 +12,189 @@ Descrizione breve:
 
 > A backpressure-aware, multi-stream traffic analytics pipeline that performs batched GPU inference, per-camera multi-object tracking, directional vehicle counting, and event logging on real traffic footage.
 
-## 2. Stato iniziale confermato
+## 2. Principi e limiti di scope
 
-Sono già completati:
+- Il caso d'uso e' **traffic analytics**, non action detection.
+- L'inferenza e' ONNX FP16 su NVIDIA RTX 3060; non dichiarare TensorRT finche' non e' integrato e misurato.
+- Le sequenze UA-DETRAC sono quattro input **indipendenti**, non camere sincronizzate della stessa rete stradale.
+- Il batching puo' essere condiviso; tracker, ROI, stato e contatori devono rimanere isolati per `camera_id`.
+- Non aggiungere riconoscimento targhe, re-identification cross-camera, dashboard enterprise o training da zero prima della pubblicazione.
+- Ogni claim prestazionale deve dichiarare modalita' di test, durata, numero di stream, risoluzione, modello e hardware.
 
-- Ambiente Ubuntu/WSL2 con GPU NVIDIA RTX 3060 12 GB.
-- Modello `YOLO26m` esportato in ONNX FP16.
-- Quattro stream simulati ottenuti replicando la stessa clip di traffico.
-- Pipeline producer–consumer con code thread-safe.
-- Dynamic batching su GPU con batch size 4.
-- Baseline sequenziale: circa 51 FPS globali.
-- Pipeline parallela: circa 22 FPS per camera, 88 FPS globali.
+## 3. Stato corrente
 
-Vincoli da rispettare:
+### Completato
 
-- Non eliminare né riscrivere la pipeline concorrente già funzionante.
-- Conservare i benchmark iniziali come riferimento.
-- Non chiamare il sistema “action detection”: il caso d’uso è **traffic analytics**.
-- Non dichiarare capacità TensorRT finché TensorRT non è realmente integrato e misurato.
-- Indicare sempre che lo stress test a quattro stream usa la stessa clip replicata.
+- Ubuntu/WSL2 con GPU NVIDIA RTX 3060 12 GB.
+- YOLO26m esportato in ONNX FP16.
+- Pipeline producer-consumer con code bounded/thread-safe e dynamic batching.
+- Baseline iniziale con quattro repliche della stessa clip.
+- Metriche globali/per-camera, latenza, queue wait, VRAM e drop rate.
+- Gestione shutdown pulito e fine video.
+- Script di setup UA-DETRAC che scarica, estrae selettivamente frame/XML, converte quattro sequenze in MP4 H.264 a 25 FPS e genera un manifest YAML.
+- Realtime pacing configurabile tramite `source_fps` nel producer.
+- Test con quattro sequenze UA-DETRAC differenti completato.
 
-## 3. Definizione di completamento
+### Risultato da classificare correttamente
 
-Il progetto è concluso quando soddisfa tutti questi requisiti:
+Il test UA-DETRAC ha elaborato 2.572 frame in 38,04 s, con 67,61 FPS output globali, 5,82% drop rate e 446,89 ms p95 e2e latency. Le clip avevano durate diverse, quindi le camere hanno terminato in momenti differenti. Questo e' un **mixed-duration realtime simulation**, non un benchmark a carico costante di quattro camere per 38 secondi.
 
-- Elabora almeno quattro stream video con inferenza GPU batchata.
-- Usa clip realistiche e differenti per la demo funzionale.
-- Esegue tracking multi-oggetto indipendente per ogni camera.
-- Conta veicoli per classe e direzione tramite line-crossing configurabile.
-- Genera dati strutturati in CSV o SQLite.
-- Registra metriche prestazionali e produce benchmark comparativi.
-- Produce almeno un video demo annotato.
-- Include README in inglese, configurazione riproducibile, diagramma architetturale e istruzioni di esecuzione.
-- Documenta chiaramente limiti, assunzioni e risultati ottenuti.
+Usare questi numeri come controllo di stabilita', non come headline definitiva del progetto.
 
-## 4. Architettura target
+## 4. Definizione di completamento
+
+Il progetto e' pronto per il portfolio quando:
+
+- elabora quattro stream con inferenza GPU batchata;
+- documenta sia `max_throughput` sia `realtime_simulation`;
+- esegue un benchmark a quattro stream a carico costante;
+- filtra e visualizza detection veicolari corrette;
+- esegue tracking multi-oggetto indipendente per camera;
+- conta veicoli per classe e direzione tramite line-crossing configurabile;
+- salva tracce, eventi, contatori e metriche in file strutturati;
+- include un video demo annotato, grafici, README in inglese e istruzioni riproducibili;
+- documenta limiti, assunzioni e validazione del conteggio.
+
+## 5. Architettura target
 
 ```text
-Video source per camera
-        │
-        ▼
-Frame capture workers
-        │
-        ▼
-Bounded per-camera input queues
-        │
-        ▼
-Dynamic batcher
-        │
-        ▼
+Independent video source per camera
+        |
+        v
+Paced capture worker per camera
+        |
+        v
+Bounded per-camera queue + drop policy
+        |
+        v
+Shared dynamic batcher
+        |
+        v
 ONNX FP16 GPU inference
-        │
-        ▼
-Detection results routed by camera_id
-        │
-        ├──────────────► Per-camera multi-object tracker
-        │                         │
-        │                         ▼
-        │                  Traffic analytics engine
-        │                  - ROI filtering
-        │                  - line crossing
-        │                  - directional counts
-        │                  - stopped-vehicle events
-        │                         │
-        ▼                         ▼
-Annotated video output       CSV / SQLite / JSON events
-        │                         │
-        └──────────────► Metrics collector and benchmark report
+        |
+        v
+Detection audit and vehicle-class filtering
+        |
+        +--> Per-camera multi-object tracker
+        |          |
+        |          v
+        |    Traffic analytics engine
+        |    - ROI filtering
+        |    - line crossing
+        |    - directional counts
+        |    - one simple traffic event
+        |
+        +--> Annotated video writer
+        |
+        +--> Tracks / counts / events CSV or SQLite
+        |
+        +--> Metrics collector and benchmark report
 ```
 
-Principio essenziale: il batching può essere condiviso tra stream, ma tracking, stato e contatori devono restare isolati per `camera_id`.
+## 6. Phase 2.1 — Detection audit and constant-load benchmark
 
-## 5. Fase 1 — Stabilizzazione e misurazione della pipeline esistente
+### Goal
 
-### Obiettivo
+Validate the detector outputs and establish a fair realtime baseline before adding a tracker.
 
-Rendere affidabili e confrontabili le prestazioni già ottenute.
+### Why this phase is required
 
-### Attività
+The current test has nearly full queues (`Q avg` around 8.7 with maximum 9), and the four clips end at different times. In addition, the observed average of about 39.5 detections per inferred frame must be visually checked before it is passed into ByteTrack.
 
-- Definire una configurazione centralizzata in YAML o JSON:
-  - modello ONNX;
-  - provider di inferenza;
-  - dimensione immagine;
-  - soglia confidence;
-  - soglia IoU;
-  - dimensione massima delle code;
-  - batch size;
-  - politica di frame dropping;
-  - elenco stream e relativo `camera_id`.
+### A. Detection audit
 
-- Registrare metriche per ogni camera e globali:
-  - frame catturati;
-  - frame inferiti;
-  - frame scartati;
-  - FPS per camera;
-  - FPS globale;
-  - latenza end-to-end p50 e p95;
-  - tempo di inferenza medio/p95;
-  - tempo medio in coda;
-  - dimensione media/massima di ogni coda;
-  - VRAM occupata, se disponibile.
+- Render annotated output for at least 100 sampled frames from every selected sequence.
+- Verify no duplicated boxes, obviously invalid boxes or raw/unfiltered model outputs are passed downstream.
+- Record detection-count p50/p95 per frame, confidence percentiles and class histogram.
+- Filter explicitly to traffic classes used by the application: `car`, `truck`, `bus`, `motorcycle` (adapt only after checking the model label map).
+- Make confidence threshold, IoU/NMS or equivalent end-to-end post-processing mode configurable.
+- Document the mismatch between COCO classes and UA-DETRAC labels, especially for `van`.
 
-- Gestire correttamente:
-  - fine file video;
-  - errore di lettura stream;
-  - shutdown pulito di thread e code;
-  - saturazione della coda;
-  - frame obsoleti: privilegiare la bassa latenza rispetto all’elaborazione di ogni frame.
+### Acceptance criteria
 
-### Criteri di accettazione
+- Annotated frames look plausible to a human observer.
+- The pipeline does not feed duplicate/raw predictions to the future tracker.
+- Class filtering and confidence threshold are logged in the run metadata.
+- A short markdown note records any remaining known false positives.
 
-- Il sistema termina senza thread bloccati.
-- Le metriche vengono salvate in un file strutturato.
-- Le definizioni di FPS e latenza sono esplicite nel codice e nel README.
-- I risultati 51 FPS sequenziale e 88 FPS concorrente sono riproducibili sullo stesso setup.
+### B. Constant-load realtime benchmark
 
-## 6. Fase 2 — Dataset e scenari di test
+- Add a loop option for local video sources or use clips trimmed to equal duration.
+- Start all four producers behind a common barrier.
+- Run for at least 60 seconds with every producer paced at 25 FPS.
+- Run the same configuration three times after a short warm-up; report the median.
+- Keep the existing mixed-duration test as a smoke/stability test, but label it as such.
 
-### Obiettivo
+### Required metrics
 
-Sostituire la sola demo con clip replicate con scenari realistici e riproducibili.
+- global input/output FPS;
+- global and per-camera drop rate;
+- per-camera active duration;
+- per-camera input/output FPS measured over active duration;
+- e2e latency p50, p95 and mean;
+- inference time mean/p95;
+- queue wait mean/p95 and queue average/maximum;
+- VRAM;
+- batch-size histogram for sizes 1, 2, 3 and 4;
+- metrics restricted to the interval where all four cameras are active.
 
-### Attività
+### Acceptance criteria
 
-- Usare **UA-DETRAC** come dataset primario per demo e validazione del tracking.
-- Selezionare quattro clip diverse:
-  - traffico basso;
-  - traffico denso;
-  - occlusioni;
-  - meteo o illuminazione più difficile.
+- The run keeps four sources active for the entire timed interval.
+- The report distinguishes input rate, processed rate and intentional drops.
+- `max_throughput` and `realtime_simulation` cannot be confused in output file names or documentation.
+- Results are written to timestamped JSON/CSV and can be regenerated by a documented command.
 
-- Creare un file di configurazione per ogni telecamera:
-  - nome e percorso della clip;
-  - `camera_id`;
-  - ROI della carreggiata;
-  - linee di conteggio;
-  - direzione attesa per ogni linea;
-  - classi da includere;
-  - eventuale soglia per veicolo fermo.
+## 7. Phase 3 — Per-camera multi-object tracking
 
-- Non caricare i video nel repository.
-- Aggiungere uno script o istruzioni per download e preparazione del dataset.
+### Goal
 
-### Criteri di accettazione
+Assign persistent local identities to vehicles within each camera stream.
 
-- La demo funzionale usa quattro clip diverse.
-- Il benchmark di scalabilità conserva quattro repliche della stessa clip, etichettate come `simulated_streams`.
-- Ogni camera ha una configurazione indipendente e caricabile senza modifiche al codice.
+### Tasks
 
-## 7. Fase 3 — Tracking multi-oggetto per camera
+- Integrate ByteTrack (preferred) behind a dedicated tracking module.
+- Instantiate one tracker per `camera_id`: `trackers[camera_id]`.
+- Route each batch result back to its original camera before tracker update.
+- Pass only audited, filtered vehicle detections to the tracker.
+- Preserve `camera_id`, original source `frame_id` and capture/inference timestamp. Do not renumber frames after drops.
+- Configure tracker frame rate and lost-track buffer consistently with 25 FPS and intentional frame dropping.
+- Use `camera_id:track_id` as the externally visible identity.
+- Overlay class and persistent ID; write a `tracks.csv` containing timestamp, camera, source frame index, track ID, class, confidence, bounding box and box centre.
 
-### Obiettivo
+### Important constraint
 
-Assegnare un identificatore temporaneamente persistente a ogni veicolo rilevato.
+Tracking is local to each camera. The same physical vehicle appearing in two different UA-DETRAC sequences must not be assigned a shared identity.
 
-### Attività
+### Acceptance criteria
 
-- Integrare ByteTrack o BoT-SORT.
-- Creare un’istanza tracker separata per ogni `camera_id`.
-- Passare al tracker solo detection filtrate:
-  - classi veicolo desiderate;
-  - confidence threshold;
-  - ROI opzionale.
+- Track state is never shared between cameras.
+- IDs remain visually stable for normal vehicle transits in two sequences, including one with occlusion.
+- No regression in clean shutdown or metric collection.
+- The realtime benchmark is repeated with tracking enabled and its overhead is reported.
 
-- Rendere visibile nell’overlay:
-  - bounding box;
-  - classe;
-  - confidence opzionale;
-  - `camera_id`;
-  - `track_id`.
+## 8. Phase 4 — ROI and directional line crossing
 
-- Salvare per ogni traccia:
-  - timestamp;
-  - frame id;
-  - bounding box;
-  - centro bounding box;
-  - velocità in pixel/frame, se calcolata;
-  - stato attivo/perso/terminato.
+### Goal
 
-### Criteri di accettazione
+Convert tracks into reliable traffic-flow counts.
 
-- Un veicolo mantiene normalmente lo stesso `track_id` durante il transito.
-- Gli ID non collidono logicamente fra camere: usare una chiave composta `camera_id:track_id`.
-- Il sistema resta in real time oppure documenta chiaramente il costo prestazionale del tracker.
-- Il tracking è verificato visivamente su almeno due clip con occlusioni.
+### Tasks
 
-## 8. Fase 4 — ROI, conteggio per corsia e direzione
+- Add per-camera polygonal ROI configuration. Prefer normalized coordinates or document resolution assumptions.
+- Define each virtual line with two points, an ID, direction label, optional lane label and allowed classes.
+- For each `track_id + line_id`, retain previous side-of-line and an already-counted flag.
+- Count only a transition across the line in the configured direction.
+- Keep the tracking state separate from analytics state; analytics must be restartable without changing tracker code.
+- Write `counts.csv` and `events.csv` with camera, line, direction, vehicle class, timestamp and track ID.
 
-### Obiettivo
-
-Convertire le tracce in metriche di traffico utili.
-
-### Attività
-
-- Implementare filtro ROI poligonale:
-  - ignorare detection o tracce fuori dalla sede stradale;
-  - configurare coordinate normalizzate oppure coordinate riferite alla risoluzione.
-
-- Implementare line crossing:
-  - definire ogni linea con due punti;
-  - memorizzare il lato precedente della linea per ogni track;
-  - registrare un attraversamento solo quando il centro della traccia cambia lato;
-  - evitare doppio conteggio con stato per `track_id + line_id`.
-
-- Associare ogni linea a:
-  - nome;
-  - direzione;
-  - eventuale corsia;
-  - classi abilitate.
-
-- Produrre contatori:
-  - per camera;
-  - per linea;
-  - per direzione;
-  - per classe veicolo;
-  - per intervallo temporale.
-
-### Output atteso
-
-Esempio di evento:
+### Event schema
 
 ```json
 {
   "timestamp_ms": 12540,
   "camera_id": "cam_02",
-  "track_id": 17,
+  "track_id": "cam_02:17",
   "event_type": "line_crossing",
   "line_id": "northbound_lane_1",
   "direction": "northbound",
@@ -245,167 +202,125 @@ Esempio di evento:
 }
 ```
 
-### Criteri di accettazione
+### Acceptance criteria
 
-- Lo stesso veicolo viene contato una sola volta per linea.
-- Il conteggio è corretto in entrambe le direzioni su una scena testata manualmente.
-- I risultati sono esportati in CSV o SQLite.
-- L’overlay mostra linee, direzione e contatori aggiornati.
+- A single track is counted at most once per configured line.
+- Overlay shows ROI, virtual lines and current per-direction counters.
+- At least two manually reviewed clips have correct visible line-crossing behavior.
 
-## 9. Fase 5 — Eventi di traffico semplici
+## 9. Phase 5 — One simple traffic event
 
-### Obiettivo
+### Goal
 
-Aggiungere una componente analitica senza espandere eccessivamente lo scope.
+Demonstrate that the pipeline produces analytics, not only detections and counts.
 
-### Eventi da implementare
+### Select exactly one first
 
-Implementare almeno uno dei seguenti:
+1. **Congestion level** — number of active tracked vehicles in a configured ROI, with `low`, `medium` and `high` thresholds.
+2. **Stopped vehicle** — a tracked vehicle remaining below a pixel/frame movement threshold for N seconds; explicitly document false alerts caused by red lights.
+3. **Queue-length estimate** — active tracked vehicles inside a designated waiting zone.
 
-1. **Stopped vehicle**
-   - Un track resta nella ROI per almeno `N` secondi.
-   - La velocità stimata resta sotto una soglia.
-   - Il veicolo non deve essere semplicemente fermo a un semaforo: documentare questo limite.
+### Acceptance criteria
 
-2. **Congestion level**
-   - Stimare densità come numero di veicoli attivi nella ROI.
-   - Definire soglie `low`, `medium`, `high`.
-   - Salvare cambi di stato con timestamp.
+- Thresholds are configured per camera.
+- State changes are emitted as structured events and displayed in the demo.
+- Known false positives are documented.
 
-3. **Queue length estimate**
-   - Contare veicoli in una specifica zona di attesa.
-   - Presentare il dato come stima basata su bounding box, non come misura fisica precisa.
+## 10. Phase 6 — Output and demo
 
-### Criteri di accettazione
+### Required outputs
 
-- Almeno un evento viene generato e scritto nei log.
-- La logica dell’evento è configurabile.
-- I falsi positivi osservati vengono documentati nel README.
+- Annotated MP4 per camera or a four-panel composite video.
+- `metrics.json`/`metrics.csv`.
+- `tracks.csv`.
+- `counts.csv`.
+- `events.csv`.
+- A compact static HTML or Markdown benchmark report. A dashboard is optional and must remain minimal.
 
-## 10. Fase 6 — Output e presentazione
+### Demo acceptance criteria
 
-### Obiettivo
+- A 60–90 second video shows multiple independent cameras, IDs, ROIs, lines, counters, FPS and the selected event.
+- Data outputs are understandable without executing the application.
+- Any public media uses dataset attribution and is not committed if its licence/distribution rules prohibit it.
 
-Rendere il sistema concretamente utilizzabile e facilmente dimostrabile.
+## 11. Phase 7 — Benchmark suite
 
-### Attività
+### Test matrix
 
-- Generare video annotati per ogni stream:
-  - box;
-  - `track_id`;
-  - linee/ROI;
-  - contatori;
-  - FPS;
-  - alert o stato congestione.
+| ID | Mode | Configuration | Question |
+|---|---|---|---|
+| B1 | max_throughput | sequential, batch 1 | What is the baseline? |
+| B2 | max_throughput | concurrent, batch 1 | What does concurrency contribute? |
+| B3 | max_throughput | concurrent, dynamic batch up to 4 | What does batching contribute? |
+| B4 | realtime_simulation | 1, 2 and 4 looped streams at 25 FPS | How does it scale under controlled live input? |
+| B5 | realtime_simulation | four different UA-DETRAC streams, 60 s, three repetitions | Does it meet the QoS target on realistic inputs? |
+| B6 | realtime_simulation | B5 with tracking | What is tracking overhead? |
 
-- Esportare:
-  - `metrics.csv`;
-  - `events.csv`;
-  - `counts.csv`;
-  - opzionalmente un database SQLite.
+Only add the following if TensorRT is actually installed, selected by the runtime and benchmarked:
 
-- Creare una vista minimale:
-  - opzionale Streamlit;
-  - oppure report HTML statico;
-  - oppure una schermata composita con quattro stream e metriche aggregate.
+| ID | Mode | Configuration | Question |
+|---|---|---|---|
+| B7 | realtime_simulation | ONNX Runtime FP16 vs TensorRT FP16 | What deployment gain is measured? |
 
-Non investire tempo in autenticazione, frontend complesso o dashboard enterprise.
+### Required graphs
 
-### Criteri di accettazione
+- output FPS and input FPS by configuration;
+- p50/p95 end-to-end latency;
+- drop rate;
+- batch-size distribution;
+- stage timing: capture, queue, inference, tracking, rendering/output;
+- VRAM;
+- counts/events for the demo run.
 
-- Esiste un video demo di 60–90 secondi.
-- I file dati possono essere aperti e analizzati senza eseguire il progetto.
-- Un osservatore capisce il funzionamento del sistema senza leggere il codice.
+### Claims discipline
 
-## 11. Fase 7 — Benchmark e analisi
+- Never divide a per-camera frame count by global elapsed time and label it simply `FPS per camera`; also report camera active time.
+- Never call a short mixed-duration file run a sustained four-camera benchmark.
+- Report median of three controlled runs, not a single best result.
+- State whether output FPS represents processed source frames, rendered frames or inference frames.
 
-### Obiettivo
+## 12. Phase 8 — Functional validation
 
-Dimostrare i trade-off di systems engineering, non solo mostrare un video.
+### Goal
 
-### Esperimenti obbligatori
+Report a small, honest validation of the counting feature.
 
-Eseguire almeno questi test sullo stesso hardware, risoluzione e dataset:
+### Tasks
 
-| ID | Configurazione | Domanda a cui risponde |
-|---|---|---|
-| B1 | Sequenziale, batch 1 | Qual è la baseline? |
-| B2 | Pipeline concorrente, batch 1 | Quanto aiuta il parallelismo tra I/O e inferenza? |
-| B3 | Pipeline concorrente, batch 4 | Quanto aiuta il batching dinamico? |
-| B4 | 1, 2 e 4 stream simulati | Come scala il throughput? |
-| B5 | 4 clip diverse | La pipeline resta stabile su scenari realistici? |
-
-Se TensorRT viene effettivamente integrato, aggiungere:
-
-| ID | Configurazione | Domanda a cui risponde |
-|---|---|---|
-| B6 | ONNX Runtime FP16 vs TensorRT FP16 | Qual è il guadagno reale del deployment engine? |
-
-### Grafici richiesti
-
-- FPS globale per configurazione.
-- FPS per camera.
-- Latenza p50 e p95.
-- Frame drop rate.
-- Tempo medio per stadio: capture, queue, inference, tracking, rendering.
-- VRAM, se misurabile.
-
-### Criteri di accettazione
-
-- Tutti gli esperimenti sono lanciabili con un comando o script documentato.
-- I grafici sono generati da dati salvati, non inseriti manualmente.
-- Il report spiega almeno un collo di bottiglia e un trade-off osservato.
-- Il claim nel README è accurato: ad esempio, `88 aggregate FPS on four replicated streams`, non `88 FPS on four independent live cameras`.
-
-## 12. Fase 8 — Validazione funzionale
-
-### Obiettivo
-
-Fornire una misura onesta della qualità del sistema di analytics.
-
-### Attività
-
-- Selezionare due intervalli da 30–60 secondi di due clip diverse.
-- Contare manualmente i veicoli che attraversano ogni linea configurata.
-- Confrontare conteggio manuale e conteggio della pipeline.
-- Calcolare:
+- Select two intervals of 30–60 seconds from two different sequences.
+- Manually count crossings for each configured line/direction.
+- Compare manual and pipeline count using:
 
 ```text
 count_error_percent = abs(predicted_count - manual_count) / manual_count * 100
 ```
 
-- Annotare errori osservati:
-  - occlusione;
-  - ID switch;
-  - detection mancata;
-  - veicolo fuori ROI;
-  - attraversamento ambiguo;
-  - duplicazione dovuta al tracker.
+- Report at least four line/direction examples.
+- Log likely causes of every material discrepancy: missed detection, ID switch, occlusion, poor ROI, ambiguous line crossing or duplicate track.
 
-### Criteri di accettazione
+### Acceptance criteria
 
-- Il README riporta almeno quattro esempi di confronto manuale vs pipeline.
-- I limiti sono esplicitamente dichiarati.
-- Non vengono riportate metriche di accuratezza non realmente calcolate.
+- The README includes the examples and methodology.
+- No uncomputed accuracy, MOT or speed claims are made.
+- The UA-DETRAC XML annotations are preserved for future tracking evaluation but are not misrepresented as a full automatic counting ground truth unless such mapping is implemented and verified.
 
-## 13. Struttura consigliata del repository
+## 13. Repository structure
 
 ```text
 traffic-analytics/
 ├── README.md
 ├── LICENSE
-├── requirements.txt
 ├── pyproject.toml
 ├── configs/
 │   ├── default.yaml
-│   ├── benchmark_replicated_streams.yaml
+│   ├── benchmark_max_throughput.yaml
+│   ├── benchmark_realtime_constant_load.yaml
 │   └── cameras/
-│       ├── cam_01.yaml
-│       ├── cam_02.yaml
-│       ├── cam_03.yaml
-│       └── cam_04.yaml
+├── data/
+│   ├── manifests/                 # tracked YAML only
+│   ├── raw/                       # ignored
+│   └── processed/                 # ignored
 ├── src/
-│   ├── main.py
 │   ├── capture/
 │   ├── pipeline/
 │   ├── inference/
@@ -414,104 +329,82 @@ traffic-analytics/
 │   ├── output/
 │   └── metrics/
 ├── scripts/
-│   ├── prepare_data.*
+│   ├── setup_ua_detrac.sh
 │   ├── run_benchmark.*
 │   └── generate_report.*
 ├── tests/
 │   ├── test_line_crossing.*
 │   ├── test_counting.*
+│   ├── test_detection_filter.*
 │   └── test_shutdown.*
 ├── docs/
 │   ├── architecture.md
 │   ├── benchmark_results.md
 │   └── images/
-└── outputs/
-    └── .gitkeep
+└── outputs/                       # ignored except .gitkeep/examples
 ```
 
-Non committare:
+Do not commit dataset/video files, model weights, ONNX/TensorRT engines, large run outputs, local paths, credentials or RTSP URLs.
 
-- video;
-- pesi del modello;
-- engine TensorRT;
-- file di output voluminosi;
-- percorsi locali;
-- credenziali o feed RTSP reali.
+## 14. README requirements
 
-## 14. README finale: contenuti obbligatori
+Write the README in English and include:
 
-Scrivere tutto in inglese e includere:
+1. One-sentence summary and a demo GIF/screenshot.
+2. Architecture diagram and explanation of bounded queues, drop policy and dynamic batching.
+3. Hardware/software/runtime versions.
+4. Dataset source, attribution/licence instructions and note on independent sequences.
+5. Quickstart and reproducible benchmark commands.
+6. Camera/ROI/line configuration guide.
+7. Benchmark table including test mode and duration.
+8. Tracking/counting validation method and results.
+9. Limitations and future work.
 
-1. One-sentence project summary.
-2. GIF o screenshot della demo.
-3. Architettura della pipeline.
-4. Funzionalità:
-   - multi-stream ingestion;
-   - bounded queues e backpressure;
-   - dynamic batching;
-   - ONNX FP16 GPU inference;
-   - per-camera tracking;
-   - directional counting;
-   - event logging.
-5. Requisiti hardware/software.
-6. Quickstart.
-7. Configurazione di una nuova camera.
-8. Dataset e licenze.
-9. Tabella benchmark.
-10. Risultati validazione conteggi.
-11. Limitazioni e future work.
-12. Riproducibilità.
+## 15. Limitations to declare
 
-## 15. Limitazioni da dichiarare esplicitamente
+- The four replicate-stream test is only a synthetic scaling benchmark.
+- UA-DETRAC demo streams are independent and not cross-camera synchronized.
+- Tracking is per camera; no cross-camera vehicle identity is inferred.
+- Counts depend on detector quality, tracker continuity, ROI and virtual-line placement.
+- Pixel/frame movement is not calibrated physical speed.
+- File-based realtime pacing approximates a live source; it is not a production RTSP deployment.
+- Results depend on input resolution/codec, model, runtime, drop policy, hardware and driver versions.
+- This is a research/portfolio prototype, not a certified traffic-control or surveillance system.
 
-- I quattro stream replicati servono solo a testare la scalabilità della pipeline.
-- Il tracking è per-camera, non cross-camera re-identification.
-- Il conteggio si basa sul centro del bounding box e può fallire in presenza di occlusioni o errori di tracking.
-- La velocità è in pixel/frame salvo calibrazione prospettica della camera.
-- Le prestazioni dipendono da risoluzione, codec, I/O, modello, runtime e GPU.
-- Il sistema è una demo di traffic analytics, non un sistema certificato per controllo del traffico o videosorveglianza.
+## 16. Scope explicitly deferred
 
-## 16. Scope da non aggiungere prima della pubblicazione
+- Cross-camera vehicle re-identification.
+- Licence-plate or face recognition.
+- Physical speed in km/h without camera calibration.
+- Training/fine-tuning a new detector.
+- Enterprise dashboard, authentication, cloud orchestration and Kubernetes.
+- Complex action recognition or accident prediction.
 
-Non implementare ora:
+## 17. Final checklist
 
-- cross-camera vehicle re-identification;
-- riconoscimento targhe;
-- riconoscimento facciale;
-- dashboard enterprise;
-- training o fine-tuning da zero;
-- Kubernetes, microservizi o cloud deployment;
-- action recognition complessa;
-- stima di velocità in km/h senza calibrazione.
+- [x] Concurrent bounded-queue pipeline, GPU inference and basic metrics.
+- [x] UA-DETRAC preparation script, manifest and four independent local videos.
+- [ ] Detection audit and class/confidence filtering.
+- [ ] 60-second constant-load, four-camera benchmark repeated three times.
+- [ ] Per-camera ByteTrack integration and `tracks.csv`.
+- [ ] ROI and configurable directional line crossing.
+- [ ] Counts/events export and one simple traffic event.
+- [ ] Annotated demo video.
+- [ ] B1–B6 benchmarks with generated graphs.
+- [ ] Manual count validation on two clips.
+- [ ] English README, demo media and cleaned repository.
 
-Questi punti possono essere indicati come future work.
+## 18. CV bullet
 
-## 17. Checklist di chiusura
+Use only after final measured results are available. Replace bracketed fields with controlled benchmark results:
 
-- [ ] La pipeline concorrente è stabile e misurata.
-- [ ] Quattro clip differenti funzionano nella demo.
-- [ ] Il tracking per camera è integrato.
-- [ ] ROI e line crossing sono configurabili.
-- [ ] I contatori per direzione/classe funzionano.
-- [ ] Almeno un evento di traffico è registrato.
-- [ ] CSV/SQLite e video annotati vengono generati.
-- [ ] Benchmark B1–B5 completati e graficati.
-- [ ] Due clip sono validate con conteggio manuale.
-- [ ] README inglese completo.
-- [ ] Video demo breve disponibile.
-- [ ] Repository pulito, riproducibile e senza file pesanti.
+> Developed a backpressure-aware multi-camera traffic analytics pipeline with ONNX FP16 GPU inference, dynamic batching, per-camera multi-object tracking and directional vehicle counting. Sustained [X] processed FPS across four 25-FPS simulated traffic streams on an NVIDIA RTX 3060, with [Y] ms p95 end-to-end latency and [Z]% frame-drop rate under a 60-second constant-load benchmark.
 
-## 18. Bullet finale per il CV
+## 19. Future work
 
-Usare solo dopo aver verificato i numeri finali:
-
-> Developed a backpressure-aware multi-camera traffic analytics pipeline with ONNX FP16 GPU inference, dynamic batching, per-camera multi-object tracking and directional vehicle counting. Achieved 88 aggregate FPS across four replicated streams on an NVIDIA RTX 3060, improving throughput by 73% over the sequential baseline; validated event and counting outputs on real traffic video.
-
-## 19. Future work da indicare nel repository
-
-- TensorRT FP16 deployment and performance comparison.
-- Camera calibration for speed estimation in km/h.
-- Cross-camera vehicle re-identification using CityFlow / AI City Challenge data.
-- Adaptive batching based on queue pressure and latency target.
-- Tracking-quality evaluation using MOT metrics.
-- Additional traffic anomalies and longer-term congestion analytics.
+- TensorRT FP16 comparison.
+- Camera calibration and physical speed estimation.
+- Cross-camera vehicle re-identification using CityFlow or AI City Challenge data.
+- Adaptive batching driven by queue pressure and latency target.
+- MOT-quality evaluation against UA-DETRAC annotations.
+- Extended congestion and anomaly analytics.

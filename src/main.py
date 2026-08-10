@@ -21,6 +21,20 @@ from src.metrics.collector import MetricsCollector
 from src.pipeline.orchestrator import PipelineOrchestrator
 
 
+def require_active_provider(engine: OnnxGpuEngine, inference_config: dict) -> None:
+    """Fail before benchmarking when the requested execution provider fell back."""
+    if not inference_config.get("require_provider", False):
+        return
+
+    requested = inference_config["provider"]
+    active = engine.providers
+    if not active or active[0] != requested:
+        raise RuntimeError(
+            f"Required provider {requested!r} is not active; session providers: {active}. "
+            "Benchmark aborted to prevent recording CPU fallback results."
+        )
+
+
 def load_config(path: str | Path) -> dict:
     """Load and return a YAML configuration file."""
     p = Path(path)
@@ -88,9 +102,11 @@ def main(config_path: str = "configs/default.yaml") -> None:
         device_id=inf_cfg["device_id"],
         warmup_batches=config["pipeline"]["warmup_batches"],
     )
+    require_active_provider(engine, inf_cfg)
 
     logger.info("Model input:  %s → %s", engine.input_name, engine.input_shape)
     logger.info("Model output: %s", engine.output_shape)
+    logger.info("Active execution providers: %s", engine.providers)
 
     # ── Metrics collector ───────────────────────────────────────────────
     camera_ids = [s["camera_id"] for s in config["streams"]]

@@ -10,6 +10,7 @@ keeping end-to-end latency low.
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -19,6 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CameraStats:
@@ -39,9 +41,15 @@ class FramePacket:
     """Payload travelling through the per-camera queue."""
 
     camera_id: str
-    frame_idx: int
+    source_frame_id: int         # original capture sequence index; gaps survive queue drops
+    source_timestamp_ms: float   # timestamp on the simulated source timeline
     capture_time_ns: int        # time.perf_counter_ns() at capture
     tensor: np.ndarray          # (3, H, W) float32, preprocessed
+
+    @property
+    def frame_idx(self) -> int:
+        """Backward-compatible alias for code written before Phase 3."""
+        return self.source_frame_id
 
 
 def letterbox(frame: np.ndarray, input_size: int = 640) -> np.ndarray:
@@ -94,6 +102,8 @@ class VideoProducer(threading.Thread):
         max_frames: int = 0,
         drop_policy: str = "latest",
         source_fps: float | None = None,
+        loop_video: bool = False,
+        barrier: threading.Barrier | None = None,
     ) -> None:
         super().__init__(daemon=True, name=f"Producer-{camera_id}")
         self.camera_id = camera_id
@@ -103,6 +113,8 @@ class VideoProducer(threading.Thread):
         self.max_frames = max_frames
         self.drop_policy = drop_policy
         self.source_fps = source_fps
+        self.loop_video = loop_video
+        self.barrier = barrier
 
         self._stop_event = threading.Event()
         self.stats = CameraStats(camera_id=camera_id)
@@ -123,8 +135,13 @@ class VideoProducer(threading.Thread):
         consecutive_errors = 0
         frame_idx = 0
         limit = self.max_frames if self.max_frames > 0 else float("inf")
-        
+
         target_frame_time = 1.0 / self.source_fps if self.source_fps and self.source_fps > 0 else 0
+
+        if self.barrier:
+            logger.info("[%s] Waiting at barrier...", self.camera_id)
+            self.barrier.wait()
+
         next_frame_time = time.perf_counter()
 
         try:
@@ -138,28 +155,38 @@ class VideoProducer(threading.Thread):
                 ret, frame = cap.read()
                 if not ret:
                     # End of video
-                    if self.max_frames == 0:
-                        # max_frames=0 means "process all" — EOF is normal
+                    if self.loop_video:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = cap.read()
+                        if not ret:
+                            consecutive_errors += 1
+                            self.stats.read_errors += 1
+                            if consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
+                                logger.error("[%s] Aborting after %d consecutive read errors", self.camera_id, consecutive_errors)
+                                break
+                            continue
+                    else:
                         break
-                    # Loop video if it's shorter than max_frames
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = cap.read()
-                    if not ret:
-                        consecutive_errors += 1
-                        self.stats.read_errors += 1
-                        if consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
-                            break
-                        continue
 
                 consecutive_errors = 0
                 capture_ts = time.perf_counter_ns()
+                source_frame_id = frame_idx
+                timeline_fps = self.source_fps or self.stats.video_fps
+                source_timestamp_ms = (
+                    source_frame_id * 1000.0 / timeline_fps
+                    if timeline_fps and timeline_fps > 0
+                    else float(cap.get(cv2.CAP_PROP_POS_MSEC))
+                )
+                # Advance on every successful source read, before any queue drop.
+                frame_idx += 1
 
                 # Preprocess in producer thread (parallelised across cameras)
                 tensor = letterbox(frame, self.input_size)
 
                 packet = FramePacket(
                     camera_id=self.camera_id,
-                    frame_idx=frame_idx,
+                    source_frame_id=source_frame_id,
+                    source_timestamp_ms=source_timestamp_ms,
                     capture_time_ns=capture_ts,
                     tensor=tensor,
                 )
@@ -179,7 +206,6 @@ class VideoProducer(threading.Thread):
                     continue
 
                 self.stats.frames_captured += 1
-                frame_idx += 1
 
         finally:
             # Sentinel to signal completion
