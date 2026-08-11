@@ -11,6 +11,7 @@ model:
 
 inference:
   provider: "CUDAExecutionProvider"
+  require_provider: true
   device_id: 0
   batch_size: 4
 
@@ -31,4 +32,5 @@ manifest_file: "data/manifests/ua_detrac_selected.yaml"
 
 output:
   metrics_file: "outputs/benchmark_metrics.json"
+  video_encoder: "h264_nvenc"   # Fail fast unless audit encoding uses the GPU.
   log_level: "INFO"

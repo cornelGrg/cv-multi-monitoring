@@ -37,6 +37,13 @@ class PerCameraMetrics:
     frames_inferred: int = 0
     frames_dropped: int = 0
     read_errors: int = 0
+    video_frames_submitted: int = 0
+    video_frames_written: int = 0
+    video_frames_dropped: int = 0
+    video_queue_size_avg: float = 0.0
+    video_queue_size_max: int = 0
+    video_worker_time_avg_ms: float = 0.0
+    video_worker_time_p95_ms: float = 0.0
 
 
 @dataclass
@@ -88,7 +95,9 @@ class MetricsCollector:
         self._e2e_latencies = _LatencyBucket()
         self._queue_waits = _LatencyBucket()
         self._tracking_times = _LatencyBucket()
+        self._tracking_batch_times = _LatencyBucket()
         self._output_times = _LatencyBucket()
+        self._video_worker_times = _LatencyBucket()
         self._batch_sizes: list[int] = []
         self._queue_sizes: dict[str, list[int]] = {cid: [] for cid in camera_ids}
 
@@ -161,6 +170,10 @@ class MetricsCollector:
         self._tracking_times.add(duration_s)
         self.total_track_observations += track_observations
 
+    def record_tracking_batch_time(self, duration_s: float) -> None:
+        """Record wall-clock time from submitting through joining a tracker batch."""
+        self._tracking_batch_times.add(duration_s)
+
     def record_output_time(self, duration_s: float) -> None:
         """Record CSV plus annotated-video output time for one source frame."""
         self._output_times.add(duration_s)
@@ -172,6 +185,21 @@ class MetricsCollector:
             cam.frames_captured = captured
             cam.frames_dropped = dropped
             cam.read_errors = errors
+
+    def sync_video_output_stats(self, camera_id: str, stats: object) -> None:
+        """Copy final asynchronous video counters after its worker has stopped."""
+        cam = self.per_camera.get(camera_id)
+        if cam is None:
+            return
+        cam.video_frames_submitted = stats.frames_submitted
+        cam.video_frames_written = stats.frames_written
+        cam.video_frames_dropped = stats.frames_dropped
+        cam.video_queue_size_avg = stats.queue_size_avg
+        cam.video_queue_size_max = stats.queue_size_max
+        cam.video_worker_time_avg_ms = stats.worker_time_avg_ms
+        cam.video_worker_time_p95_ms = stats.worker_time_p95_ms
+        for duration_s in stats.worker_times_s:
+            self._video_worker_times.add(duration_s)
 
     # ── Computed metrics ────────────────────────────────────────────────
 
@@ -213,6 +241,9 @@ class MetricsCollector:
         per_cam = {}
         total_captured = 0
         total_dropped = 0
+        total_video_submitted = 0
+        total_video_written = 0
+        total_video_dropped = 0
 
         for cid in self.camera_ids:
             cam = self.per_camera[cid]
@@ -222,6 +253,9 @@ class MetricsCollector:
             dropped = cam.frames_dropped
             total_captured += captured
             total_dropped += dropped
+            total_video_submitted += cam.video_frames_submitted
+            total_video_written += cam.video_frames_written
+            total_video_dropped += cam.video_frames_dropped
 
             drop_rate_pct = (dropped / captured * 100.0) if captured > 0 else 0.0
 
@@ -233,10 +267,25 @@ class MetricsCollector:
                 "read_errors": cam.read_errors,
                 "queue_size_avg": float(np.mean(qs)) if qs else 0.0,
                 "queue_size_max": int(np.max(qs)) if qs else 0,
+                "video_frames_submitted": cam.video_frames_submitted,
+                "video_frames_written": cam.video_frames_written,
+                "video_frames_dropped": cam.video_frames_dropped,
+                "video_drop_rate_pct": round(
+                    cam.video_frames_dropped / cam.video_frames_submitted * 100.0, 2
+                ) if cam.video_frames_submitted else 0.0,
+                "video_queue_size_avg": cam.video_queue_size_avg,
+                "video_queue_size_max": cam.video_queue_size_max,
+                "video_worker_time_avg_ms": cam.video_worker_time_avg_ms,
+                "video_worker_time_p95_ms": cam.video_worker_time_p95_ms,
             }
 
         global_drop_rate = (total_dropped / total_captured * 100.0) if total_captured > 0 else 0.0
         input_fps = total_captured / self.elapsed_s if self.elapsed_s > 0 else 0.0
+        video_drop_rate = (
+            total_video_dropped / total_video_submitted * 100.0
+            if total_video_submitted
+            else 0.0
+        )
 
         return {
             "global": {
@@ -257,8 +306,20 @@ class MetricsCollector:
                 "queue_wait_avg_ms": round(self._queue_waits.mean * 1000, 2),
                 "tracking_time_avg_ms": round(self._tracking_times.mean * 1000, 2),
                 "tracking_time_p95_ms": round(self._tracking_times.percentile(95) * 1000, 2),
+                "tracking_batch_wall_avg_ms": round(self._tracking_batch_times.mean * 1000, 2),
+                "tracking_batch_wall_p95_ms": round(
+                    self._tracking_batch_times.percentile(95) * 1000, 2
+                ),
                 "output_time_avg_ms": round(self._output_times.mean * 1000, 2),
                 "output_time_p95_ms": round(self._output_times.percentile(95) * 1000, 2),
+                "video_frames_submitted": total_video_submitted,
+                "video_frames_written": total_video_written,
+                "video_frames_dropped": total_video_dropped,
+                "video_drop_rate_pct": round(video_drop_rate, 2),
+                "video_worker_time_avg_ms": round(self._video_worker_times.mean * 1000, 2),
+                "video_worker_time_p95_ms": round(
+                    self._video_worker_times.percentile(95) * 1000, 2
+                ),
                 "vram_used_mb": vram,
                 "num_cameras": len(self.camera_ids),
             },
@@ -306,8 +367,14 @@ class MetricsCollector:
         print(f"| Queue wait (avg)               | {g['queue_wait_avg_ms']:.2f} ms{'':<11} |")
         print(f"| Tracking time (avg)            | {g['tracking_time_avg_ms']:.2f} ms{'':<11} |")
         print(f"| Tracking time (p95)            | {g['tracking_time_p95_ms']:.2f} ms{'':<11} |")
+        print(f"| Tracking batch wall (avg)      | {g['tracking_batch_wall_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Tracking batch wall (p95)      | {g['tracking_batch_wall_p95_ms']:.2f} ms{'':<11} |")
         print(f"| Output time (avg)              | {g['output_time_avg_ms']:.2f} ms{'':<11} |")
         print(f"| Output time (p95)              | {g['output_time_p95_ms']:.2f} ms{'':<11} |")
+        print(f"| Video frames written           | {g['video_frames_written']:<20} |")
+        print(f"| Video-only drop rate           | {g['video_drop_rate_pct']:.2f}%{'':<15} |")
+        print(f"| Video worker time (avg)        | {g['video_worker_time_avg_ms']:.2f} ms{'':<11} |")
+        print(f"| Video worker time (p95)        | {g['video_worker_time_p95_ms']:.2f} ms{'':<11} |")
         v = f"{g['vram_used_mb']:.0f} MB" if g["vram_used_mb"] is not None else "N/A"
         print(f"| VRAM used                      | {v:<20} |")
         print()

@@ -24,6 +24,12 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
         self.tracking = yaml.safe_load(
             (PROJECT_ROOT / "configs/benchmark_realtime_tracking_compute.yaml").read_text()
         )
+        self.tracking_with_output = yaml.safe_load(
+            (PROJECT_ROOT / "configs/benchmark_realtime_tracking.yaml").read_text()
+        )
+        self.detection_with_audit = yaml.safe_load(
+            (PROJECT_ROOT / "configs/benchmark_realtime_constant_load.yaml").read_text()
+        )
 
     def test_controlled_pair_differs_only_in_tracking_and_metrics_path(self) -> None:
         for section in ("model", "inference", "pipeline", "manifest_file"):
@@ -37,6 +43,18 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
     def test_controlled_pair_requires_cuda_provider(self) -> None:
         self.assertTrue(self.detection["inference"]["require_provider"])
         self.assertEqual(self.detection["inference"]["provider"], "CUDAExecutionProvider")
+
+    def test_tracking_output_benchmark_requires_gpu_inference_and_encoding(self) -> None:
+        self.assertTrue(self.tracking_with_output["inference"]["require_provider"])
+        self.assertEqual(
+            self.tracking_with_output["output"]["video_encoder"], "h264_nvenc"
+        )
+
+    def test_detection_audit_requires_gpu_inference_and_encoding(self) -> None:
+        self.assertTrue(self.detection_with_audit["inference"]["require_provider"])
+        self.assertEqual(
+            self.detection_with_audit["output"]["video_encoder"], "h264_nvenc"
+        )
 
     def test_provider_check_rejects_cpu_fallback(self) -> None:
         config = {"provider": "CUDAExecutionProvider", "require_provider": True}

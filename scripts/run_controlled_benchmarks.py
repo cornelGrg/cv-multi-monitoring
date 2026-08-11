@@ -30,6 +30,8 @@ MEDIAN_KEYS = (
     "queue_wait_avg_ms",
     "tracking_time_avg_ms",
     "tracking_time_p95_ms",
+    "tracking_batch_wall_avg_ms",
+    "tracking_batch_wall_p95_ms",
     "vram_used_mb",
 )
 

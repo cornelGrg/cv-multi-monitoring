@@ -135,6 +135,16 @@ class PerCameraByteTracker:
         self.camera_id = camera_id
         self.config = config
         self._tracker = (tracker_factory or _default_tracker_factory)(config)
+        backend_track_class = getattr(self._tracker, "track_class", None)
+        if isinstance(backend_track_class, type):
+            # Ultralytics' default STrack counter is class-global. A private
+            # subclass gives each camera its own native ID allocator as well as
+            # the externally visible camera-local mapping below.
+            self._tracker.track_class = type(
+                f"{camera_id.replace('-', '_')}LocalSTrack",
+                (backend_track_class,),
+                {"_count": 0},
+            )
         self._last_source_frame_id: int | None = None
         self._native_to_local: dict[int, int] = {}
         self._next_local_id = 1

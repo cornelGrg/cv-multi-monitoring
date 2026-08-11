@@ -36,6 +36,8 @@ tracking:
   fuse_score: true
   write_annotated_video: true
   write_tracks_csv: true
+  video_queue_maxsize: 8
+  video_drop_policy: "latest"
   annotated_video_dir: "outputs/tracking_benchmark"
   tracks_file: "outputs/tracking_benchmark/tracks.csv"
 
@@ -43,4 +45,5 @@ manifest_file: "data/manifests/ua_detrac_selected.yaml"
 
 output:
   metrics_file: "outputs/tracking_benchmark/metrics.json"
+  video_encoder: "h264_nvenc"   # Fail fast unless demo encoding uses the GPU.
   log_level: "INFO"

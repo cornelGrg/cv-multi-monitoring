@@ -109,6 +109,15 @@ class PerCameraByteTrackerTests(unittest.TestCase):
         self.assertEqual(first[0].track_id, "cam_real:1")
         self.assertEqual(recovered[0].track_id, "cam_real:1")
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("ultralytics") and importlib.util.find_spec("lap"),
+        "real ByteTrack dependencies are not installed",
+    )
+    def test_real_bytetrack_uses_camera_local_native_track_classes(self) -> None:
+        cam_a = PerCameraByteTracker("cam_a", ByteTrackConfig())
+        cam_b = PerCameraByteTracker("cam_b", ByteTrackConfig())
+        self.assertIsNot(cam_a.backend.track_class, cam_b.backend.track_class)
+
 
 if __name__ == "__main__":
     unittest.main()

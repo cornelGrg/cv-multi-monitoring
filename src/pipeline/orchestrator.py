@@ -18,6 +18,7 @@ import numpy as np
 from src.capture.producer import FramePacket, VideoProducer
 from src.inference.engine import OnnxGpuEngine
 from src.metrics.collector import MetricsCollector
+from src.output.async_annotator import AsyncVideoAnnotator
 from src.output.annotator import VideoAnnotator
 from src.output.tracks_csv import TracksCsvWriter
 from src.tracking.bytetrack import ByteTrackConfig, PerCameraByteTracker
@@ -71,6 +72,7 @@ class PipelineOrchestrator:
         self._queues: list[queue.Queue] = []
         self._camera_ids: list[str] = []
         self._annotators: dict[str, VideoAnnotator] = {}
+        self._async_annotators: dict[str, AsyncVideoAnnotator] = {}
         self._trackers: dict[str, PerCameraByteTracker] = {}
         self._tracks_writer: TracksCsvWriter | None = None
 
@@ -92,6 +94,13 @@ class PipelineOrchestrator:
             raise ValueError("Phase 3 supports tracker_type='bytetrack' only")
         self._write_tracked_video = bool(tracking_cfg.get("write_annotated_video", True))
         self._write_tracks_csv = bool(tracking_cfg.get("write_tracks_csv", True))
+        self._video_queue_maxsize = int(tracking_cfg.get("video_queue_maxsize", 8))
+        self._video_drop_policy = tracking_cfg.get("video_drop_policy", "latest")
+        output_cfg = config.get("output", {})
+        self._video_encoder = output_cfg.get(
+            "video_encoder",
+            tracking_cfg.get("video_encoder", "auto"),
+        )
         self._tracking_config = ByteTrackConfig.from_dict(tracking_cfg)
         if (
             self._tracking_enabled
@@ -138,7 +147,13 @@ class PipelineOrchestrator:
             if self._audit_frames > 0:
                 out_path = project_root / f"outputs/audit_{camera_id}.mp4"
                 fps = self._source_fps if self._source_fps else 25.0
-                self._annotators[camera_id] = VideoAnnotator(out_path, fps, self._input_size, self._input_size)
+                self._annotators[camera_id] = VideoAnnotator(
+                    out_path,
+                    fps,
+                    self._input_size,
+                    self._input_size,
+                    encoder=self._video_encoder,
+                )
 
             if self._tracking_enabled:
                 self._trackers[camera_id] = PerCameraByteTracker(
@@ -148,8 +163,14 @@ class PipelineOrchestrator:
                 if self._write_tracked_video:
                     out_path = project_root / self._tracked_video_dir / f"{camera_id}.mp4"
                     fps = self._source_fps or self._tracking_config.frame_rate
-                    self._annotators[camera_id] = VideoAnnotator(
-                        out_path, fps, self._input_size, self._input_size
+                    self._async_annotators[camera_id] = AsyncVideoAnnotator(
+                        out_path,
+                        fps,
+                        self._input_size,
+                        self._input_size,
+                        queue_maxsize=self._video_queue_maxsize,
+                        drop_policy=self._video_drop_policy,
+                        encoder=self._video_encoder,
                     )
 
             logger.info("Configured stream %s → %s", camera_id, video_path)
@@ -158,7 +179,7 @@ class PipelineOrchestrator:
             self._tracks_writer = TracksCsvWriter(project_root / self._tracks_file)
         if self._tracking_enabled:
             logger.info(
-                "ByteTrack enabled — %d independent trackers, %.1f FPS, %d-frame lost buffer, video=%s, csv=%s",
+                "ByteTrack enabled — %d independent sequential trackers, %.1f FPS, %d-frame lost buffer, async_video=%s, csv=%s",
                 len(self._trackers),
                 self._tracking_config.frame_rate,
                 self._tracking_config.track_buffer,
@@ -252,11 +273,14 @@ class PipelineOrchestrator:
 
             # Tracking is routed back to the packet's camera before any output.
             if self._tracking_enabled:
-                for i in range(true_batch_size):
-                    packet = packets[i]
+                tracking_batch_started = time.perf_counter()
+                tracked_frames = []
+                for packet, camera_detections in zip(
+                    packets, filtered[:true_batch_size]
+                ):
                     tracking_started = time.perf_counter()
                     tracks = self._trackers[packet.camera_id].update(
-                        filtered[i],
+                        camera_detections,
                         source_frame_id=packet.source_frame_id,
                         source_timestamp_ms=packet.source_timestamp_ms,
                         capture_time_ns=packet.capture_time_ns,
@@ -266,14 +290,22 @@ class PipelineOrchestrator:
                         time.perf_counter() - tracking_started,
                         track_observations=len(tracks),
                     )
+                    tracked_frames.append((packet, tracks))
+                self.collector.record_tracking_batch_time(
+                    time.perf_counter() - tracking_batch_started
+                )
 
+                for packet, tracks in tracked_frames:
                     output_started = time.perf_counter()
                     if self._tracks_writer is not None:
                         self._tracks_writer.write(tracks)
-                    annotator = self._annotators.get(packet.camera_id)
+                    annotator = self._async_annotators.get(packet.camera_id)
                     if annotator is not None:
-                        disp = (packet.tensor.transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
-                        annotator.write_tracks(disp, tracks)
+                        annotator.submit(
+                            packet.tensor,
+                            tracks,
+                            source_frame_id=packet.source_frame_id,
+                        )
                     self.collector.record_output_time(time.perf_counter() - output_started)
 
             # Phase 2.1 audit path remains unchanged when tracking is disabled.
@@ -342,18 +374,35 @@ class PipelineOrchestrator:
                 errors=p.stats.read_errors,
             )
 
-        # Release annotators
+        # Flush and release output workers after the timed analytics interval.
+        video_errors: list[str] = []
+        for camera_id, annotator in self._async_annotators.items():
+            try:
+                annotator.close()
+            except RuntimeError as exc:
+                video_errors.append(f"{camera_id}: {exc}")
+                logger.error("Video writer %s failed: %s", camera_id, exc)
+            finally:
+                stats = annotator.stats()
+                self.collector.sync_video_output_stats(camera_id, stats)
         for ann in self._annotators.values():
             ann.release()
         if self._tracks_writer is not None:
             self._tracks_writer.close()
 
         # Verify no leftover threads
-        alive = [t for t in threading.enumerate() if t.name.startswith("Producer-")]
+        alive = [
+            t
+            for t in threading.enumerate()
+            if t.name.startswith(("Producer-", "VideoWriter-"))
+        ]
         if alive:
             logger.warning("Leftover producer threads: %s", [t.name for t in alive])
         else:
             logger.info("All producer threads terminated cleanly")
+
+        if video_errors:
+            raise RuntimeError("Annotated-video output failed: " + "; ".join(video_errors))
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -371,8 +420,8 @@ class PipelineOrchestrator:
 
         # Timed consumer loop
         self.collector.start_clock()
-        self._consumer_loop()
-        self.collector.stop_clock()
-
-        # Clean shutdown
-        self._shutdown()
+        try:
+            self._consumer_loop()
+        finally:
+            self.collector.stop_clock()
+            self._shutdown()
