@@ -81,10 +81,9 @@ class OnnxGpuEngine:
         self.model_path = Path(model_path)
         self._warmup_count = warmup_batches
 
-        providers: list = [
-            (provider, {"device_id": device_id}),
-            "CPUExecutionProvider",
-        ]
+        providers: list = ["CPUExecutionProvider"]
+        if provider != "CPUExecutionProvider":
+            providers.insert(0, (provider, {"device_id": device_id}))
 
         logger.info("Loading %s for ONNX Runtime inference", self.model_path.name)
         self._session = ort.InferenceSession(str(self.model_path), providers=providers)

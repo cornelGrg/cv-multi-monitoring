@@ -5,7 +5,8 @@ from pathlib import Path
 
 import yaml
 
-from src.main import require_active_provider
+from src.analytics.line_crossing import MultiCameraTrafficAnalytics
+from src.main import load_config, require_active_provider
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,9 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
         )
         self.detection_with_audit = yaml.safe_load(
             (PROJECT_ROOT / "configs/benchmark_realtime_constant_load.yaml").read_text()
+        )
+        self.phase4 = yaml.safe_load(
+            (PROJECT_ROOT / "configs/phase4_analytics_demo.yaml").read_text()
         )
 
     def test_controlled_pair_differs_only_in_tracking_and_metrics_path(self) -> None:
@@ -55,6 +59,21 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
         self.assertEqual(
             self.detection_with_audit["output"]["video_encoder"], "h264_nvenc"
         )
+
+    def test_phase4_demo_has_complete_per_camera_analytics_and_gpu_requirements(self) -> None:
+        loaded = load_config(PROJECT_ROOT / "configs/phase4_analytics_demo.yaml")
+        camera_ids = [stream["camera_id"] for stream in loaded["streams"]]
+        analytics = MultiCameraTrafficAnalytics(
+            loaded["analytics"],
+            camera_ids,
+            canvas_width=loaded["model"]["input_size"],
+            canvas_height=loaded["model"]["input_size"],
+        )
+
+        self.assertTrue(self.phase4["inference"]["require_provider"])
+        self.assertEqual(self.phase4["output"]["video_encoder"], "h264_nvenc")
+        self.assertEqual(analytics.camera_ids, tuple(camera_ids))
+        self.assertTrue(self.phase4["analytics"]["write_csv"])
 
     def test_provider_check_rejects_cpu_fallback(self) -> None:
         config = {"provider": "CUDAExecutionProvider", "require_provider": True}

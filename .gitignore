@@ -1,32 +1,41 @@
-# Python virtual environment and cache
+# Python environments, caches, and build output
 venv/
+.venv/
 __pycache__/
 *.py[cod]
-*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 
 # IDEs and Tools
 .vscode/
 .idea/
 .antigravity-ide/
 .gemini/
-artifacts/
+# Local documentation, planning, and experiments
+/docs/
+/artifacts/
+/utility_test/
 
 # Data and Archives
-data/raw/
-data/processed/
-outputs/
-*.engine
-*.onnx
+/data/raw/
+/data/processed/
+/data/videos/
 
 # Model weights and TensorRT engines
-models/*.pt
-models/*.onnx
-models/*.engine
-models/*.trt
+*.pt
+*.onnx
+*.engine
+*.trt
 
 # Voluminous output files (metrics, logs, events)
-outputs/*
-!outputs/.gitkeep
+/outputs/*
+!/outputs/.gitkeep
 *.log
 *.csv
 *.sqlite
@@ -34,5 +43,9 @@ outputs/*
 
 # Local paths, credentials, or real RTSP feeds
 .env
+.env.*
+!.env.example
+.kaggle/
+kaggle.json
 local_config.yaml
 secret*.yaml

@@ -7,10 +7,13 @@ from typing import Iterable
 import cv2
 import numpy as np
 
+from src.analytics.line_crossing import AnalyticsOverlay
+
 logger = logging.getLogger(__name__)
 
 _auto_encoders: dict[tuple[int, int], str] = {}
-_encoder_lock = threading.Lock()
+_encoder_probe_results: dict[tuple[str, int, int], bool] = {}
+_encoder_lock = threading.RLock()
 
 # COCO labels for traffic classes
 COCO_CLASSES = {
@@ -23,6 +26,12 @@ COCO_CLASSES = {
 
 def _probe_encoder(encoder: str, width: int, height: int) -> bool:
     """Return whether FFmpeg can initialise an encoder in this environment."""
+    cache_key = (encoder, width, height)
+    with _encoder_lock:
+        cached = _encoder_probe_results.get(cache_key)
+    if cached is not None:
+        return cached
+
     command = [
         "ffmpeg",
         "-v",
@@ -48,8 +57,12 @@ def _probe_encoder(encoder: str, width: int, height: int) -> bool:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+        usable = False
+    else:
+        usable = result.returncode == 0
+    with _encoder_lock:
+        _encoder_probe_results[cache_key] = usable
+    return usable
 
 
 def select_h264_encoder(requested: str, width: int, height: int) -> str:
@@ -215,12 +228,111 @@ class VideoAnnotator:
 
         self._write(annotated)
 
-    def write_tracks(self, frame: np.ndarray, tracks: Iterable[object]) -> None:
-        """Write a frame labelled with vehicle class and camera-local track ID."""
+    def _draw_analytics(
+        self,
+        frame: np.ndarray,
+        overlay: AnalyticsOverlay,
+    ) -> None:
+        """Draw the ROI, directed lines and immutable counter snapshot in place."""
+        def pixel(point: tuple[float, float]) -> tuple[int, int]:
+            return (
+                min(self.width - 1, max(0, round(point[0] * self.width))),
+                min(self.height - 1, max(0, round(point[1] * self.height))),
+            )
+
+        roi = np.asarray([pixel(point) for point in overlay.roi], dtype=np.int32)
+        tint = frame.copy()
+        cv2.fillPoly(tint, [roi], (180, 0, 180))
+        cv2.addWeighted(tint, 0.10, frame, 0.90, 0.0, frame)
+        cv2.polylines(frame, [roi], True, (255, 0, 255), 2, cv2.LINE_AA)
+
+        panel_lines: list[str] = []
+        for line in overlay.lines:
+            start = pixel(line.p1)
+            end = pixel(line.p2)
+            color = (70, 255, 70)
+            cv2.line(frame, start, end, color, 3, cv2.LINE_AA)
+
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            length = max(1.0, float(np.hypot(dx, dy)))
+            normal_x = -dy / length
+            normal_y = dx / length
+            if line.crossing_direction == "positive_to_negative":
+                normal_x = -normal_x
+                normal_y = -normal_y
+            midpoint = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
+            arrow_end = (
+                round(midpoint[0] + normal_x * 32),
+                round(midpoint[1] + normal_y * 32),
+            )
+            cv2.arrowedLine(
+                frame,
+                midpoint,
+                arrow_end,
+                color,
+                2,
+                cv2.LINE_AA,
+                tipLength=0.35,
+            )
+            cv2.putText(
+                frame,
+                line.line_id,
+                (start[0] + 4, max(16, start[1] - 7)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
+            class_counts = " ".join(
+                f"{class_name}:{count}" for class_name, count in line.counts_by_class
+            )
+            detail = f" ({class_counts})" if class_counts else ""
+            lane = f" [{line.lane_label}]" if line.lane_label else ""
+            panel_lines.append(
+                f"{line.direction_label}{lane}: {line.count_total}{detail}"
+            )
+
+        if panel_lines:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.48
+            line_height = 21
+            panel_width = min(
+                self.width - 16,
+                max(cv2.getTextSize(text, font, font_scale, 1)[0][0] for text in panel_lines)
+                + 18,
+            )
+            panel_height = len(panel_lines) * line_height + 10
+            cv2.rectangle(frame, (8, 8), (8 + panel_width, 8 + panel_height), (0, 0, 0), -1)
+            for index, text in enumerate(panel_lines):
+                cv2.putText(
+                    frame,
+                    text,
+                    (16, 27 + index * line_height),
+                    font,
+                    font_scale,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+    def write_tracks(
+        self,
+        frame: np.ndarray,
+        tracks: Iterable[object],
+        *,
+        analytics_overlay: AnalyticsOverlay | None = None,
+    ) -> None:
+        """Write tracked vehicles and an optional traffic-analytics overlay."""
         annotated = frame.copy()
+        if analytics_overlay is not None:
+            self._draw_analytics(annotated, analytics_overlay)
         for track in tracks:
             x1, y1, x2, y2 = (int(track.x1), int(track.y1), int(track.x2), int(track.y2))
-            label = f"{track.class_name} {track.track_id} {track.confidence:.2f}"
+            # The file itself is camera-scoped; keep the overlay compact and
+            # retain the globally unambiguous camera:id form in tracks.csv.
+            label = f"{track.class_name} #{track.local_track_id}"
             color = (0, 200, 255)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
             (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)

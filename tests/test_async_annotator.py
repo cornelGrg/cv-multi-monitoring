@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from src.output.async_annotator import AsyncVideoAnnotator
+from src.analytics.line_crossing import AnalyticsOverlay
 
 
 class _BlockingAnnotator:
@@ -37,6 +38,23 @@ class _FailingReleaseAnnotator:
 
     def release(self) -> None:
         raise RuntimeError("encoder failed")
+
+
+class _OverlayAnnotator:
+    def __init__(self) -> None:
+        self.received_overlay: AnalyticsOverlay | None = None
+
+    def write_tracks(
+        self,
+        frame: np.ndarray,
+        tracks: tuple[int, ...],
+        *,
+        analytics_overlay: AnalyticsOverlay | None = None,
+    ) -> None:
+        self.received_overlay = analytics_overlay
+
+    def release(self) -> None:
+        pass
 
 
 class AsyncVideoAnnotatorTests(unittest.TestCase):
@@ -107,6 +125,28 @@ class AsyncVideoAnnotatorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "encoder failed"):
             annotator.close()
 
+    def test_analytics_overlay_snapshot_reaches_worker(self) -> None:
+        sink = _OverlayAnnotator()
+        overlay = AnalyticsOverlay(roi=((0.1, 0.1), (0.9, 0.1), (0.5, 0.9)), lines=())
+        annotator = AsyncVideoAnnotator(
+            "ignored.mp4",
+            25.0,
+            2,
+            2,
+            annotator_factory=lambda *_: sink,
+        )
+        tensor = np.zeros((3, 2, 2), dtype=np.float32)
+
+        annotator.submit(
+            tensor,
+            [],
+            source_frame_id=1,
+            analytics_overlay=overlay,
+        )
+        annotator.close()
+
+        self.assertIs(sink.received_overlay, overlay)
+
     def test_real_writer_flushes_all_queued_frames_on_shutdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_path = Path(tmp) / "async.mp4"
@@ -116,6 +156,7 @@ class AsyncVideoAnnotatorTests(unittest.TestCase):
                 640,
                 640,
                 queue_maxsize=4,
+                encoder="libx264",
             )
             tensor = np.zeros((3, 640, 640), dtype=np.float32)
             for source_frame_id in range(3):

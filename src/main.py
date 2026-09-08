@@ -21,6 +21,14 @@ from src.metrics.collector import MetricsCollector
 from src.pipeline.orchestrator import PipelineOrchestrator
 
 
+VEHICLE_CLASS_NAMES = {
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+}
+
+
 def require_active_provider(engine: OnnxGpuEngine, inference_config: dict) -> None:
     """Fail before benchmarking when the requested execution provider fell back."""
     if not inference_config.get("require_provider", False):
@@ -110,7 +118,64 @@ def main(config_path: str = "configs/default.yaml") -> None:
 
     # ── Metrics collector ───────────────────────────────────────────────
     camera_ids = [s["camera_id"] for s in config["streams"]]
-    collector = MetricsCollector(camera_ids)
+    pipeline_cfg = config.get("pipeline", {})
+    tracking_cfg = config.get("tracking", {})
+    analytics_cfg = config.get("analytics", {})
+    output_cfg = config.get("output", {})
+    allowed_class_ids = pipeline_cfg.get("allowed_classes", [2, 3, 5, 7])
+    try:
+        recorded_config_path = str(Path(config_path).resolve().relative_to(project_root))
+    except ValueError:
+        recorded_config_path = str(config_path)
+    run_metadata = {
+        "config": recorded_config_path,
+        "mode": (
+            "realtime_simulation"
+            if pipeline_cfg.get("source_fps")
+            else "max_throughput"
+        ),
+        "model": config["model"]["path"],
+        "model_precision": "FP16",
+        "input_size": config["model"]["input_size"],
+        "confidence_threshold": config["model"]["confidence_threshold"],
+        "postprocessing": (
+            "end-to-end model output with integrated NMS; configured iou_threshold "
+            "is informational and is not applied again in Python"
+        ),
+        "iou_threshold_configured": config["model"].get("iou_threshold"),
+        "allowed_class_ids": allowed_class_ids,
+        "allowed_class_names": [
+            VEHICLE_CLASS_NAMES.get(class_id, str(class_id))
+            for class_id in allowed_class_ids
+        ],
+        "requested_provider": inf_cfg["provider"],
+        "active_providers": engine.providers,
+        "batch_size": inf_cfg["batch_size"],
+        "num_streams": len(camera_ids),
+        "source_fps": pipeline_cfg.get("source_fps"),
+        "duration_s": pipeline_cfg.get("max_duration_s", 0.0),
+        "tracking_enabled": bool(tracking_cfg.get("enabled", False)),
+        "analytics_enabled": bool(analytics_cfg.get("enabled", False)),
+        "analytics_coordinate_space": (
+            "normalized_letterbox_canvas"
+            if analytics_cfg.get("enabled", False)
+            else None
+        ),
+        "analytics_lines_by_camera": {
+            camera_id: [line.get("line_id") for line in camera_cfg.get("lines", [])]
+            for camera_id, camera_cfg in analytics_cfg.get("cameras", {}).items()
+        },
+        "video_encoder": output_cfg.get(
+            "video_encoder",
+            tracking_cfg.get("video_encoder"),
+        ),
+    }
+    logger.info(
+        "Detection filter: confidence > %.2f, allowed COCO classes: %s",
+        config["model"]["confidence_threshold"],
+        dict(zip(allowed_class_ids, run_metadata["allowed_class_names"])),
+    )
+    collector = MetricsCollector(camera_ids, run_metadata=run_metadata)
 
     # ── Orchestrator ────────────────────────────────────────────────────
     orchestrator = PipelineOrchestrator(config, engine, collector)

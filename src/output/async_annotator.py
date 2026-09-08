@@ -7,13 +7,16 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 import numpy as np
 
 from src.tracking.bytetrack import Track
 
 from .annotator import VideoAnnotator
+
+if TYPE_CHECKING:
+    from src.analytics.line_crossing import AnalyticsOverlay
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,7 @@ class AnnotationJob:
     source_frame_id: int
     tensor: np.ndarray
     tracks: tuple[Track, ...]
+    analytics_overlay: AnalyticsOverlay | None
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,7 @@ class AsyncVideoAnnotator:
         tracks: Sequence[Track],
         *,
         source_frame_id: int,
+        analytics_overlay: AnalyticsOverlay | None = None,
     ) -> bool:
         """Queue a frame without blocking the analytics path.
 
@@ -107,7 +112,12 @@ class AsyncVideoAnnotator:
             raise RuntimeError(f"Video writer failed: {self._error}") from self._error
 
         self._frames_submitted += 1
-        job = AnnotationJob(source_frame_id, tensor, tuple(tracks))
+        job = AnnotationJob(
+            source_frame_id,
+            tensor,
+            tuple(tracks),
+            analytics_overlay,
+        )
 
         if self._queue.full():
             if self.drop_policy == "drop_newest":
@@ -137,7 +147,14 @@ class AsyncVideoAnnotator:
                     break
                 started = time.perf_counter()
                 frame = (job.tensor.transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
-                self._annotator.write_tracks(frame, job.tracks)
+                if job.analytics_overlay is None:
+                    self._annotator.write_tracks(frame, job.tracks)
+                else:
+                    self._annotator.write_tracks(
+                        frame,
+                        job.tracks,
+                        analytics_overlay=job.analytics_overlay,
+                    )
                 self._worker_times.append(time.perf_counter() - started)
                 self._frames_written += 1
         except BaseException as exc:  # propagated on the next submit and logged at shutdown

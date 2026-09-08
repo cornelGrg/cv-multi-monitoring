@@ -15,11 +15,13 @@ from pathlib import Path
 
 import numpy as np
 
+from src.analytics.line_crossing import MultiCameraTrafficAnalytics
 from src.capture.producer import FramePacket, VideoProducer
 from src.inference.engine import OnnxGpuEngine
 from src.metrics.collector import MetricsCollector
 from src.output.async_annotator import AsyncVideoAnnotator
 from src.output.annotator import VideoAnnotator
+from src.output.analytics_csv import AnalyticsCsvWriter
 from src.output.tracks_csv import TracksCsvWriter
 from src.tracking.bytetrack import ByteTrackConfig, PerCameraByteTracker
 
@@ -75,6 +77,8 @@ class PipelineOrchestrator:
         self._async_annotators: dict[str, AsyncVideoAnnotator] = {}
         self._trackers: dict[str, PerCameraByteTracker] = {}
         self._tracks_writer: TracksCsvWriter | None = None
+        self._analytics: MultiCameraTrafficAnalytics | None = None
+        self._analytics_writer: AnalyticsCsvWriter | None = None
 
         pipeline_cfg = config.get("pipeline", {})
         self._queue_maxsize: int = pipeline_cfg.get("queue_maxsize", 10)
@@ -111,11 +115,30 @@ class PipelineOrchestrator:
         self._tracks_file = tracking_cfg.get("tracks_file", "outputs/tracking/tracks.csv")
         self._tracked_video_dir = tracking_cfg.get("annotated_video_dir", "outputs/tracking")
 
+        analytics_cfg = config.get("analytics", {})
+        self._analytics_enabled = bool(analytics_cfg.get("enabled", False))
+        if self._analytics_enabled and not self._tracking_enabled:
+            raise ValueError("Traffic analytics requires tracking.enabled=true")
+        self._write_analytics_csv = bool(analytics_cfg.get("write_csv", True))
+        self._events_file = analytics_cfg.get(
+            "events_file", "outputs/analytics/events.csv"
+        )
+        self._counts_file = analytics_cfg.get(
+            "counts_file", "outputs/analytics/counts.csv"
+        )
+
         self._barrier = threading.Barrier(len(config["streams"]) + 1) if (self._max_duration_s > 0 or self._loop_video) else None
 
         self._conf_threshold: float = config["model"]["confidence_threshold"]
         self._input_size: int = config["model"]["input_size"]
         self._batch_size: int = config["inference"]["batch_size"]
+        if self._analytics_enabled:
+            self._analytics = MultiCameraTrafficAnalytics(
+                analytics_cfg,
+                [stream["camera_id"] for stream in config["streams"]],
+                canvas_width=self._input_size,
+                canvas_height=self._input_size,
+            )
 
     # ── Setup ───────────────────────────────────────────────────────────
 
@@ -177,6 +200,11 @@ class PipelineOrchestrator:
 
         if self._tracking_enabled and self._write_tracks_csv:
             self._tracks_writer = TracksCsvWriter(project_root / self._tracks_file)
+        if self._analytics_enabled and self._write_analytics_csv:
+            self._analytics_writer = AnalyticsCsvWriter(
+                project_root / self._events_file,
+                project_root / self._counts_file,
+            )
         if self._tracking_enabled:
             logger.info(
                 "ByteTrack enabled — %d independent sequential trackers, %.1f FPS, %d-frame lost buffer, async_video=%s, csv=%s",
@@ -185,6 +213,12 @@ class PipelineOrchestrator:
                 self._tracking_config.track_buffer,
                 self._write_tracked_video,
                 self._write_tracks_csv,
+            )
+        if self._analytics is not None:
+            logger.info(
+                "Traffic analytics enabled — normalized per-camera ROIs/lines, cameras=%s, csv=%s",
+                self._analytics.camera_ids,
+                self._write_analytics_csv,
             )
 
     # ── Consumer loop ───────────────────────────────────────────────────
@@ -267,6 +301,7 @@ class PipelineOrchestrator:
             detections_output, inference_time = self.engine.infer(batch)
             inference_time_ns = time.perf_counter_ns()
             filtered = filter_detections(detections_output, self._conf_threshold, self._allowed_classes)
+            self.collector.record_detection_frames(filtered[:true_batch_size])
 
             # Count only detections for the valid (unpadded) packets
             n_det = sum(len(filtered[i]) for i in range(true_batch_size))
@@ -290,21 +325,51 @@ class PipelineOrchestrator:
                         time.perf_counter() - tracking_started,
                         track_observations=len(tracks),
                     )
-                    tracked_frames.append((packet, tracks))
+                    analytics_overlay = None
+                    analytics_events = ()
+                    if self._analytics is not None:
+                        analytics_started = time.perf_counter()
+                        analytics_result = self._analytics.update(
+                            packet.camera_id,
+                            tracks,
+                            source_frame_id=packet.source_frame_id,
+                            source_timestamp_ms=packet.source_timestamp_ms,
+                        )
+                        analytics_events = analytics_result.events
+                        analytics_overlay = analytics_result.overlay
+                        self.collector.record_analytics_time(
+                            time.perf_counter() - analytics_started,
+                            analytics_events,
+                        )
+                        for event in analytics_events:
+                            logger.info(
+                                "Line crossing — %s %s %s %s at %.1f ms",
+                                event.camera_id,
+                                event.track_id,
+                                event.direction,
+                                event.class_name,
+                                event.timestamp_ms,
+                            )
+                    tracked_frames.append(
+                        (packet, tracks, analytics_events, analytics_overlay)
+                    )
                 self.collector.record_tracking_batch_time(
                     time.perf_counter() - tracking_batch_started
                 )
 
-                for packet, tracks in tracked_frames:
+                for packet, tracks, analytics_events, analytics_overlay in tracked_frames:
                     output_started = time.perf_counter()
                     if self._tracks_writer is not None:
                         self._tracks_writer.write(tracks)
+                    if self._analytics_writer is not None:
+                        self._analytics_writer.write(analytics_events)
                     annotator = self._async_annotators.get(packet.camera_id)
                     if annotator is not None:
                         annotator.submit(
                             packet.tensor,
                             tracks,
                             source_frame_id=packet.source_frame_id,
+                            analytics_overlay=analytics_overlay,
                         )
                     self.collector.record_output_time(time.perf_counter() - output_started)
 
@@ -314,9 +379,13 @@ class PipelineOrchestrator:
                     cam_id = packets[i].camera_id
                     annotator = self._annotators.get(cam_id)
                     if annotator and annotator.frames_written < self._audit_frames:
+                        output_started = time.perf_counter()
                         # Reconstruct (640,640,3) BGR uint8 from (3,640,640) RGB float32
                         disp = (packets[i].tensor.transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
                         annotator.write_frame(disp, filtered[i])
+                        self.collector.record_output_time(
+                            time.perf_counter() - output_started
+                        )
 
             # Record metrics
             self.collector.record_batch(
@@ -372,6 +441,7 @@ class PipelineOrchestrator:
                 captured=p.stats.frames_captured,
                 dropped=p.stats.frames_dropped,
                 errors=p.stats.read_errors,
+                active_duration_s=p.stats.active_duration_s,
             )
 
         # Flush and release output workers after the timed analytics interval.
@@ -385,10 +455,16 @@ class PipelineOrchestrator:
             finally:
                 stats = annotator.stats()
                 self.collector.sync_video_output_stats(camera_id, stats)
-        for ann in self._annotators.values():
+        for camera_id, ann in self._annotators.items():
             ann.release()
+            self.collector.sync_synchronous_video_output(
+                camera_id,
+                ann.frames_written,
+            )
         if self._tracks_writer is not None:
             self._tracks_writer.close()
+        if self._analytics_writer is not None:
+            self._analytics_writer.close()
 
         # Verify no leftover threads
         alive = [

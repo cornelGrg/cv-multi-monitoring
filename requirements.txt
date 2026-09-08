@@ -1,0 +1,7 @@
+# Versions verified by the Phase 4 implementation and local audit.
+numpy==2.5.1
+onnxruntime-gpu==1.28.0
+opencv-python==5.0.0.93
+PyYAML==6.0.3
+
+-r requirements-tracking.txt

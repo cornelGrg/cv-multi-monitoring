@@ -34,6 +34,15 @@ class CameraStats:
     video_height: int = 0
     video_total_frames: int = 0
     video_fps: float = 0.0
+    first_capture_time_ns: int | None = None
+    last_capture_time_ns: int | None = None
+
+    @property
+    def active_duration_s(self) -> float:
+        """Wall-clock span between the first and last captured source frames."""
+        if self.first_capture_time_ns is None or self.last_capture_time_ns is None:
+            return 0.0
+        return max(0.0, (self.last_capture_time_ns - self.first_capture_time_ns) / 1e9)
 
 
 @dataclass
@@ -170,6 +179,9 @@ class VideoProducer(threading.Thread):
 
                 consecutive_errors = 0
                 capture_ts = time.perf_counter_ns()
+                if self.stats.first_capture_time_ns is None:
+                    self.stats.first_capture_time_ns = capture_ts
+                self.stats.last_capture_time_ns = capture_ts
                 source_frame_id = frame_idx
                 timeline_fps = self.source_fps or self.stats.video_fps
                 source_timestamp_ms = (
