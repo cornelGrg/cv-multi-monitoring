@@ -48,7 +48,9 @@ analytics:
   enabled: true
   normalized_coordinates: true
   state_ttl_ms: 10000
-  side_epsilon: 0.0005
+  # Zero tolerance avoids the observed slow-crossing misses in the tolerance band.
+  # Selected after saved-track replay; fresh-run count validation is still needed.
+  side_epsilon: 0.0
   write_csv: true
   events_file: "outputs/phase4_demo/events.csv"
   counts_file: "outputs/phase4_demo/counts.csv"
@@ -57,23 +59,23 @@ analytics:
     # sidewalk.  The near/left carriageway travels down; the far/right one up.
     cam_01:
       roi:
-        - [0.54, 0.24]
-        - [0.66, 0.24]
-        - [0.995, 0.39]
+        - [0.52, 0.24]
+        - [0.70, 0.24]
+        - [0.995, 0.34]
         - [0.995, 0.78]
         - [0.33, 0.78]
-        - [0.45, 0.48]
+        - [0.45, 0.46]
       lines:
         - line_id: "toward_camera_main"
           p1: [0.38, 0.66]
-          p2: [0.94, 0.66]
+          p2: [0.98, 0.66]
           crossing_direction: "negative_to_positive"
           direction_label: "toward_camera"
           lane_label: "near_carriageway"
           allowed_classes: [car, motorcycle, bus, truck]
         - line_id: "away_from_camera_main"
-          p1: [0.73, 0.36]
-          p2: [0.92, 0.36]
+          p1: [0.72, 0.34]
+          p2: [0.99, 0.34]
           crossing_direction: "positive_to_negative"
           direction_label: "away_from_camera"
           lane_label: "far_carriageway"
@@ -82,25 +84,25 @@ analytics:
     # and stairwell while retaining the two usable carriageways.
     cam_02:
       roi:
-        - [0.50, 0.24]
+        - [0.49, 0.24]
         - [0.74, 0.24]
-        - [1.00, 0.34]
+        - [1.00, 0.30]
         - [1.00, 0.78]
-        - [0.31, 0.78]
-        - [0.36, 0.62]
-        - [0.43, 0.45]
+        - [0.29, 0.78]
+        - [0.34, 0.62]
+        - [0.41, 0.45]
 
       lines:
         - line_id: "toward_camera_main"
-          p1: [0.36, 0.64]
-          p2: [0.95, 0.64]
+          p1: [0.34, 0.64]
+          p2: [0.99, 0.64]
           crossing_direction: "negative_to_positive"
           direction_label: "toward_camera"
           lane_label: "near_carriageway"
           allowed_classes: [car, motorcycle, bus, truck]
         - line_id: "away_from_camera_main"
-          p1: [0.72, 0.32]
-          p2: [0.93, 0.32]
+          p1: [0.69, 0.30]
+          p2: [0.99, 0.30]
           crossing_direction: "positive_to_negative"
           direction_label: "away_from_camera"
           lane_label: "far_carriageway"
@@ -159,6 +161,7 @@ analytics:
 manifest_file: "data/manifests/ua_detrac_selected.yaml"
 
 output:
+  show_detections: true  # Overlay accepted detections in cyan alongside yellow tracks.
   metrics_file: "outputs/phase4_demo/metrics.json"
   video_encoder: "h264_nvenc"
   log_level: "INFO"

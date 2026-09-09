@@ -4,7 +4,7 @@ Multi-Camera Real-Time Traffic Analytics Pipeline — entry point.
 Usage::
 
     python -m src.main                              # uses configs/default.yaml
-    python -m src.main --config configs/benchmark_replicated_streams.yaml
+    python -m src.main --config configs/phase4_analytics_demo.yaml
 """
 
 from __future__ import annotations
@@ -155,6 +155,7 @@ def main(config_path: str = "configs/default.yaml") -> None:
         "source_fps": pipeline_cfg.get("source_fps"),
         "duration_s": pipeline_cfg.get("max_duration_s", 0.0),
         "tracking_enabled": bool(tracking_cfg.get("enabled", False)),
+        "show_detections": bool(output_cfg.get("show_detections", False)),
         "analytics_enabled": bool(analytics_cfg.get("enabled", False)),
         "analytics_coordinate_space": (
             "normalized_letterbox_canvas"

@@ -101,6 +101,7 @@ class PipelineOrchestrator:
         self._video_queue_maxsize = int(tracking_cfg.get("video_queue_maxsize", 8))
         self._video_drop_policy = tracking_cfg.get("video_drop_policy", "latest")
         output_cfg = config.get("output", {})
+        self._show_detections = bool(output_cfg.get("show_detections", False))
         self._video_encoder = output_cfg.get(
             "video_encoder",
             tracking_cfg.get("video_encoder", "auto"),
@@ -351,13 +352,13 @@ class PipelineOrchestrator:
                                 event.timestamp_ms,
                             )
                     tracked_frames.append(
-                        (packet, tracks, analytics_events, analytics_overlay)
+                        (packet, tracks, analytics_events, analytics_overlay, camera_detections)
                     )
                 self.collector.record_tracking_batch_time(
                     time.perf_counter() - tracking_batch_started
                 )
 
-                for packet, tracks, analytics_events, analytics_overlay in tracked_frames:
+                for packet, tracks, analytics_events, analytics_overlay, camera_detections in tracked_frames:
                     output_started = time.perf_counter()
                     if self._tracks_writer is not None:
                         self._tracks_writer.write(tracks)
@@ -370,6 +371,7 @@ class PipelineOrchestrator:
                             tracks,
                             source_frame_id=packet.source_frame_id,
                             analytics_overlay=analytics_overlay,
+                            detections=camera_detections if self._show_detections else None,
                         )
                     self.collector.record_output_time(time.perf_counter() - output_started)
 

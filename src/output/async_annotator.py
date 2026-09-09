@@ -27,6 +27,7 @@ class AnnotationJob:
     tensor: np.ndarray
     tracks: tuple[Track, ...]
     analytics_overlay: AnalyticsOverlay | None
+    detections: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class AsyncVideoAnnotator:
         *,
         source_frame_id: int,
         analytics_overlay: AnalyticsOverlay | None = None,
+        detections: np.ndarray | None = None,
     ) -> bool:
         """Queue a frame without blocking the analytics path.
 
@@ -117,6 +119,7 @@ class AsyncVideoAnnotator:
             tensor,
             tuple(tracks),
             analytics_overlay,
+            None if detections is None else detections.copy(),
         )
 
         if self._queue.full():
@@ -147,14 +150,12 @@ class AsyncVideoAnnotator:
                     break
                 started = time.perf_counter()
                 frame = (job.tensor.transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
-                if job.analytics_overlay is None:
-                    self._annotator.write_tracks(frame, job.tracks)
-                else:
-                    self._annotator.write_tracks(
-                        frame,
-                        job.tracks,
-                        analytics_overlay=job.analytics_overlay,
-                    )
+                overlays = {}
+                if job.analytics_overlay is not None:
+                    overlays["analytics_overlay"] = job.analytics_overlay
+                if job.detections is not None:
+                    overlays["detections"] = job.detections
+                self._annotator.write_tracks(frame, job.tracks, **overlays)
                 self._worker_times.append(time.perf_counter() - started)
                 self._frames_written += 1
         except BaseException as exc:  # propagated on the next submit and logged at shutdown

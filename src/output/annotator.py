@@ -323,8 +323,9 @@ class VideoAnnotator:
         tracks: Iterable[object],
         *,
         analytics_overlay: AnalyticsOverlay | None = None,
+        detections: np.ndarray | None = None,
     ) -> None:
-        """Write tracked vehicles and an optional traffic-analytics overlay."""
+        """Write tracks, analytics, and optional post-filter detection diagnostics."""
         annotated = frame.copy()
         if analytics_overlay is not None:
             self._draw_analytics(annotated, analytics_overlay)
@@ -348,6 +349,27 @@ class VideoAnnotator:
                 1,
                 cv2.LINE_AA,
             )
+            if detections is not None:
+                cv2.circle(annotated, ((x1 + x2) // 2, y2), 3, color, -1)
+        if detections is not None:
+            # Draw after tracks so even a perfectly overlapping detector box
+            # remains visible. Track boxes are thicker and keep their ID labels.
+            color = (255, 255, 0)  # cyan in BGR, distinct from tracks and gates
+            for x1, y1, x2, y2, confidence, class_id in detections:
+                x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 1)
+                label = f"D {COCO_CLASSES.get(int(class_id), str(int(class_id)))} {confidence:.2f}"
+                label_y = min(self.height - 3, max(12, y2 + 12))
+                label_x = max(0, min(x1, self.width - 130))
+                cv2.putText(annotated, label, (label_x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(annotated, label, (label_x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+            cv2.rectangle(annotated, (0, self.height - 22),
+                          (self.width - 1, self.height - 1), (0, 0, 0), -1)
+            cv2.putText(annotated, "Cyan D: detection | Yellow #ID/dot: track | Green: gate",
+                        (6, self.height - 7), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.43, (255, 255, 255), 1, cv2.LINE_AA)
         self._write(annotated)
 
     def release(self) -> None:

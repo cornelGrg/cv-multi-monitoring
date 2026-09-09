@@ -43,6 +43,7 @@ class _FailingReleaseAnnotator:
 class _OverlayAnnotator:
     def __init__(self) -> None:
         self.received_overlay: AnalyticsOverlay | None = None
+        self.received_detections: np.ndarray | None = None
 
     def write_tracks(
         self,
@@ -50,14 +51,31 @@ class _OverlayAnnotator:
         tracks: tuple[int, ...],
         *,
         analytics_overlay: AnalyticsOverlay | None = None,
+        detections: np.ndarray | None = None,
     ) -> None:
         self.received_overlay = analytics_overlay
+        self.received_detections = detections
 
     def release(self) -> None:
         pass
 
 
 class AsyncVideoAnnotatorTests(unittest.TestCase):
+    def test_detection_snapshot_reaches_worker_without_shared_mutation(self) -> None:
+        sink = _OverlayAnnotator()
+        detections = np.array([[0, 0, 1, 1, 0.9, 2]], dtype=np.float32)
+        expected = detections.copy()
+        annotator = AsyncVideoAnnotator(
+            "ignored.mp4", 25.0, 2, 2, annotator_factory=lambda *_: sink,
+        )
+        annotator.submit(
+            np.zeros((3, 2, 2), dtype=np.float32), [],
+            source_frame_id=0, detections=detections,
+        )
+        detections[:] = 0
+        annotator.close()
+        np.testing.assert_array_equal(sink.received_detections, expected)
+
     def test_latest_policy_drops_only_queued_video_frame(self) -> None:
         sink = _BlockingAnnotator()
         annotator = AsyncVideoAnnotator(
