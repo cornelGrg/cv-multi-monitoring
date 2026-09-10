@@ -1,0 +1,28 @@
+weights:
+  file: yolo26m.pt
+  url: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt
+  sha256: 401cea9ab23ad19246ff7744859816bc599f350e93c9dd30367b6f0a0745d0b7
+export:
+  format: onnx
+  imgsz: 640
+  batch: 4
+  dynamic: false
+  quantize: 16
+  simplify: true
+  opset: 20
+  nms: false
+  device: cpu
+contract:
+  input_shape:
+  - 4
+  - 3
+  - 640
+  - 640
+  output_shape:
+  - 4
+  - 300
+  - 6
+  io_dtype: float32
+  weights_precision: float16
+notes: Export file hashes can differ because metadata contains timestamps; benchmark
+  model hashes are in the published results.

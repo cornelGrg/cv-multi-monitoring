@@ -1,0 +1,124 @@
+description: Human vehicle counts; bottom-center crossing, all vehicle classes. Cam
+  01 away corrected to 19.
+cameras:
+  cam_01:
+    source_sha256: 0de3682b44ba48944debc4cdf5c44c1194e8ce118457f52c38ee0b64751177af
+    geometry:
+      roi:
+      - - 0.52
+        - 0.24
+      - - 0.7
+        - 0.24
+      - - 0.995
+        - 0.34
+      - - 0.995
+        - 0.78
+      - - 0.33
+        - 0.78
+      - - 0.45
+        - 0.46
+      lines:
+      - line_id: toward_camera_main
+        p1:
+        - 0.38
+        - 0.66
+        p2:
+        - 0.98
+        - 0.66
+        crossing_direction: negative_to_positive
+        direction_label: toward_camera
+        lane_label: near_carriageway
+        allowed_classes:
+        - car
+        - motorcycle
+        - bus
+        - truck
+      - line_id: away_from_camera_main
+        p1:
+        - 0.72
+        - 0.34
+        p2:
+        - 0.99
+        - 0.34
+        crossing_direction: positive_to_negative
+        direction_label: away_from_camera
+        lane_label: far_carriageway
+        allowed_classes:
+        - car
+        - motorcycle
+        - bus
+        - truck
+  cam_02:
+    source_sha256: 885418046c019fc1d2c5b1766ba407a3c2d1f97117ff8ca64440ac47735b9bd7
+    geometry:
+      roi:
+      - - 0.49
+        - 0.24
+      - - 0.74
+        - 0.24
+      - - 1.0
+        - 0.3
+      - - 1.0
+        - 0.78
+      - - 0.29
+        - 0.78
+      - - 0.34
+        - 0.62
+      - - 0.41
+        - 0.45
+      lines:
+      - line_id: toward_camera_main
+        p1:
+        - 0.34
+        - 0.64
+        p2:
+        - 0.99
+        - 0.64
+        crossing_direction: negative_to_positive
+        direction_label: toward_camera
+        lane_label: near_carriageway
+        allowed_classes:
+        - car
+        - motorcycle
+        - bus
+        - truck
+      - line_id: away_from_camera_main
+        p1:
+        - 0.69
+        - 0.3
+        p2:
+        - 0.99
+        - 0.3
+        crossing_direction: positive_to_negative
+        direction_label: away_from_camera
+        lane_label: far_carriageway
+        allowed_classes:
+        - car
+        - motorcycle
+        - bus
+        - truck
+comparisons:
+- camera_id: cam_01
+  direction: toward_camera
+  line_id: toward_camera_main
+  start_s: 2
+  end_s: 25
+  manual: 24
+- camera_id: cam_01
+  direction: away_from_camera
+  line_id: away_from_camera_main
+  start_s: 2
+  end_s: 25
+  manual: 19
+- camera_id: cam_02
+  direction: toward_camera
+  line_id: toward_camera_main
+  start_s: 2
+  end_s: 32
+  manual: 23
+- camera_id: cam_02
+  direction: away_from_camera
+  line_id: away_from_camera_main
+  start_s: 2
+  end_s: 32
+  manual: 11

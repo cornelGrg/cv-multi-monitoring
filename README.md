@@ -1,126 +1,122 @@
 # Multi-Camera Traffic Analytics
 
-Vehicle detection, tracking, and directional counting across four traffic video
-streams. Built with Python, YOLO26m, ONNX Runtime, and ByteTrack as a personal
-computer vision project.
+Vehicle detection, tracking, and directional traffic flow across four video
+streams. A personal computer vision project built with Python, YOLO26m,
+ONNX Runtime, and ByteTrack.
 
 ## Features
 
-- Batched GPU inference across independent camera feeds.
-- Per-camera vehicle tracking with persistent IDs.
-- Configurable road regions and directional counting lines.
-- Annotated H.264 video, CSV tracks and events, and JSON metrics.
-- Bounded frame queues that discard older frames when processing falls behind.
-
-## How it works
+- Batched GPU detection and independent tracking for each camera.
+- Configurable road regions and directional crossing gates.
+- Traffic flow in vehicles/minute over a rolling 15-second window.
+- CSV events, performance metrics, annotated videos, and a four-camera showcase.
 
 ```mermaid
 flowchart LR
     A[Video sources] --> B[Capture threads and bounded queues]
     B --> C[Batched GPU detection]
     C --> D[Per-camera tracking]
-    D --> E[Directional counting]
+    D --> E[Directional counts and flow]
     E --> F[Video, CSV, and metrics]
 ```
 
-Each camera has its own capture thread and tracker. A shared ONNX Runtime session
-processes batches of four frames. Vehicle tracks are counted when their
-bottom-center crosses a configured line in the permitted direction.
+Tracks are counted when their bottom-center crosses a gate in the configured
+direction. Queues discard older frames when processing falls behind.
 
-The demo uses four independent UA-DETRAC sequences played at 25 FPS. Tracking
-identities belong to individual cameras; vehicles are not matched across views.
+## Setup
 
-## Requirements
-
-Tested on Ubuntu under WSL2 with Python 3.14.4 and an NVIDIA RTX 3060 (12 GB).
-The GPU setup uses CUDA 13, cuDNN 9, and ONNX Runtime 1.28.0.
-
-You also need FFmpeg with `libx264` and `h264_nvenc`, plus `ffprobe`. Install
-compatible NVIDIA drivers and runtime libraries separately from the Python
-packages.
-
-## Installation
-
-Run from the repository root:
+Tested on Ubuntu/WSL2 with Python 3.14.4 and an NVIDIA RTX 3060 (12 GB,
+driver 610.88). Install FFmpeg with `libx264`, `h264_nvenc`, and `ffprobe`.
+The lock file includes the tested Python packages, CUDA 13/cuDNN 9 libraries,
+export tools, and plotting dependencies.
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-lock.txt
 ```
 
-Place the exported model at `models/yolo26m.onnx`. The expected export uses FP16
-weights, float32 input `[4, 3, 640, 640]`, and end-to-end output `[4, 300, 6]`.
-Model files are not included or downloaded automatically. The inference engine
-looks for CUDA/cuDNN libraries in the virtual environment's NVIDIA packages.
+Download the [YOLO26m weights](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt)
+to `models/yolo26m.pt`, then export:
 
-To prepare the demo data, install the Kaggle CLI and configure its authentication:
+```bash
+python -m scripts.export_model --weights models/yolo26m.pt --output models/yolo26m.onnx
+```
+
+The export uses FP16 weights, float32 input `[4,3,640,640]`, and native end-to-end
+output `[4,300,6]`. Existing models are not overwritten.
+[Weight checksum and export settings](data/manifests/model_reference.yaml).
+
+Prepare the sources with an authenticated Kaggle CLI:
 
 ```bash
 python -m pip install kaggle
 bash scripts/setup_ua_detrac.sh solesensei/solesensei_uadtrac \
   MVI_20011 MVI_20012 MVI_20032 MVI_20052
+python -m scripts.check_environment
 ```
 
-This creates four local videos and `data/manifests/ua_detrac_selected.yaml`.
-Access to the dataset requires an available Kaggle source and account permissions.
+Use `--archive /path/to/dataset.zip` for an existing archive. Setup validates frame
+numbering and reuses verified outputs. The environment check verifies source
+reading, model interfaces, CUDA inference, and NVENC. Local preparation and clean
+environment setup were tested; Kaggle download requires external access.
 
-## Usage
-
-Run the full 60-second demo:
+## Run the demo
 
 ```bash
 python -m src.main --config configs/phase4_analytics_demo.yaml
+python -m scripts.render_demo
 ```
 
-Edit the YAML to change camera regions, counting lines, output paths, or run
-duration. ROI and line coordinates are normalized to the 640×640 letterboxed
-image. Camera sources are defined in the manifest.
+Watch `outputs/phase4_demo/showcase.mp4` for all four cameras, track IDs,
+directional gates, crossing totals, and flow. If the recorded run is current,
+run only the rendering command; it uses saved results without repeating inference.
 
-To inspect detections alongside tracks, set `show_detections: true` in the
-configuration's `output` section. Cyan boxes show accepted detections and their
-confidence; yellow boxes show track IDs; green lines mark counting gates. The
-option defaults to off when omitted. Predictions below the configured confidence
-threshold are not displayed.
+The four independent file sources loop at 25 FPS. The showcase holds each processed
+image until the next observation to preserve source timing and is labeled as
+recorded replay. Per-camera videos, tracks, events, counts, flow, frame indexes,
+configuration snapshots, and metrics share the same output folder. Rerunning
+replaces those outputs; generated data stays out of Git.
 
-The demo writes to `outputs/phase4_demo/`:
-
-| File | Contents |
-|---|---|
-| `cam_XX.mp4` | Annotated video for each camera |
-| `tracks.csv` | Vehicle IDs, positions, classes, and source timestamps |
-| `events.csv` | Individual line-crossing events |
-| `counts.csv` | Cumulative counts by camera, line, direction, and class |
-| `metrics.json` | Throughput, latency, drops, and processing timings |
-
-Rerunning the demo overwrites those files. Data, models, and generated outputs
-are excluded from Git.
+Edit `analytics.flow.window_s` to change the flow window. Startup rates are marked
+as warming up. ROI and gate coordinates use the normalized 640×640 letterboxed
+image. Set `output.show_detections: true` for diagnostic detection boxes.
 
 ## Results
 
-Measured on the RTX 3060 with four 25 FPS inputs, a 640×640 model input, and
-batch size four. Each run lasts 60 seconds.
+Three 60-second runs per configuration on the RTX 3060, with four 25 FPS inputs,
+640×640 inference, and batch size four. Values below are medians.
 
-| Configuration | Processed FPS | Frame drop | p95 latency | Measurement |
-|---|---:|---:|---:|---|
-| Detection | 91.61 | 7.41% | 447.77 ms | Median of 3 runs |
-| Detection + tracking | 67.06 | 31.84% | 466.83 ms | Median of 3 runs |
-| Full analytics + annotated video | 57.14 | 41.42% | 479.97 ms | Single run |
+| Configuration | Processed FPS | Frame drop | Run p95 latency |
+|---|---:|---:|---:|
+| Detection only | 92.21 | 6.81% | 447.00 ms |
+| Detection + tracking | 67.22 | 31.67% | 466.17 ms |
+| Full pipeline + video | 56.89 | 41.88% | 480.70 ms |
 
-The compute comparisons disable CSV and video output. The full run includes the
-optional detection overlay and recorded no video-only drops. Latency measures
-consumer-side processing, excluding asynchronous encoding completion.
+The first two configurations disable CSV/video output. The full pipeline includes
+15-second flow, CSVs, and four NVENC videos, with diagnostic boxes off. No video-only
+drops occurred. Latency excludes asynchronous encoding completion.
 
-A manual check of four camera/direction combinations across two clips found
-counts within **0–2 vehicles** of the manual totals. The reviewed intervals were
-23 and 30 seconds. This is an initial functional check; broader evaluation is
-still needed.
+![Throughput and latency across three runs](assets/results/performance.png)
 
-To repeat the detection/tracking comparison:
+The representative full run differed from manual counts by **0–2 vehicles** across
+four camera/direction comparisons in 23- and 30-second intervals. These are small
+count checks, not a general accuracy estimate.
+
+[Directional flow](assets/results/traffic_flow.png) ·
+[Manual count comparison](assets/results/count_comparison.png) ·
+[Measurements and provenance](assets/results/results.json)
+
+To repeat the measurements and generate all three figures:
 
 ```bash
 python scripts/run_controlled_benchmarks.py --runs 3
+python -m scripts.plot_results --suite outputs/final_benchmarks/TIMESTAMP
 ```
+
+Replace `TIMESTAMP` with the suite printed by the runner. Suites retain raw results,
+input hashes, configurations, and environment details; interrupted runs support
+`--resume <suite-path>`. Manual comparisons require the reviewed source fingerprints.
 
 ## Tests
 
@@ -128,25 +124,19 @@ python scripts/run_controlled_benchmarks.py --runs 3
 python -m unittest discover -s tests -v
 ```
 
-The 37 tests cover tracking isolation, frame gaps, counting geometry, CSV output,
-and asynchronous video handling. They run without GPU inference; video tests
-require FFmpeg and FFprobe.
+Tests cover tracking, crossings, flow, replay, output, and reproducibility helpers.
+They run without GPU inference; video tests require FFmpeg and FFprobe.
 
 ## Limitations
 
-- Input is simulated live video from files; live-stream recovery is not implemented.
-- Processing does not keep up with every frame from four 25 FPS inputs.
-- Counting quality depends on the scene, detections, tracking, and gate placement.
-- Saved videos omit dropped frames, so playback is shorter than the source timeline.
-- The fixed batch-four setup needs changes to support more than four cameras.
+- File replay only; live camera ingestion and recovery are future work.
+- Four 25 FPS inputs exceed the full pipeline's processing rate.
+- Counting depends on detections, tracking, camera motion, and gate placement.
+- Camera identities are independent; there is no cross-camera vehicle matching.
+- Individual camera videos omit dropped frames; the showcase preserves timing.
 
-## Future work
+## Attribution
 
-- A simple traffic-state indicator, such as vehicle occupancy in a road region.
-- Wider counting evaluation and performance comparisons.
-- Reproducible model export and live camera support.
-
-## Dataset
-
-The demo uses UA-DETRAC. Dataset media is not distributed with this repository;
-follow its attribution and distribution terms when preparing public demos.
+Footage: [UA-DETRAC](https://arxiv.org/abs/1511.04136). Model and pretrained weights:
+Ultralytics YOLO26, subject to its [license terms](https://www.ultralytics.com/license).
+Dataset media and model weights are not distributed with this repository.

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Iterable, TextIO
 
 from src.analytics.line_crossing import LineCrossingEvent
+from src.analytics.traffic_flow import FlowSnapshot
 
 
 class AnalyticsCsvWriter:
@@ -40,7 +42,10 @@ class AnalyticsCsvWriter:
         "trigger_track_id",
     ]
 
-    def __init__(self, events_path: str | Path, counts_path: str | Path) -> None:
+    def __init__(
+        self, events_path: str | Path, counts_path: str | Path,
+        flow_path: str | Path | None = None,
+    ) -> None:
         self.events_path = Path(events_path)
         self.counts_path = Path(counts_path)
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +64,28 @@ class AnalyticsCsvWriter:
         )
         self._events_writer.writeheader()
         self._counts_writer.writeheader()
+        self._flow_file: TextIO | None = None
+        self._flow_writer = None
+        if flow_path is not None:
+            path = Path(flow_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._flow_file = path.open("w", newline="", encoding="utf-8")
+            self._flow_writer = csv.DictWriter(
+                self._flow_file, fieldnames=[field.name for field in fields(FlowSnapshot)],
+            )
+            self._flow_writer.writeheader()
+
+    def write_flow(self, snapshots: Iterable[FlowSnapshot]) -> None:
+        """Write sampled rates, including zero-flow windows and warm-up status."""
+        if self._flow_writer is None:
+            return
+        for snapshot in snapshots:
+            row = asdict(snapshot)
+            for key, value in row.items():
+                if isinstance(value, float):
+                    row[key] = round(value, 3)
+            self._flow_writer.writerow(row)
+        self._flow_file.flush()
 
     def write(self, events: Iterable[LineCrossingEvent]) -> int:
         """Append new events, flush them for long-running service visibility."""
@@ -98,6 +125,8 @@ class AnalyticsCsvWriter:
         return rows_written
 
     def close(self) -> None:
+        if self._flow_file is not None and not self._flow_file.closed:
+            self._flow_file.close()
         if not self._events_file.closed:
             self._events_file.flush()
             self._events_file.close()

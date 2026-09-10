@@ -139,7 +139,7 @@ def main(config_path: str = "configs/default.yaml") -> None:
         "input_size": config["model"]["input_size"],
         "confidence_threshold": config["model"]["confidence_threshold"],
         "postprocessing": (
-            "end-to-end model output with integrated NMS; configured iou_threshold "
+            "native end-to-end model output without a separate NMS pass; configured iou_threshold "
             "is informational and is not applied again in Python"
         ),
         "iou_threshold_configured": config["model"].get("iou_threshold"),
@@ -157,6 +157,11 @@ def main(config_path: str = "configs/default.yaml") -> None:
         "tracking_enabled": bool(tracking_cfg.get("enabled", False)),
         "show_detections": bool(output_cfg.get("show_detections", False)),
         "analytics_enabled": bool(analytics_cfg.get("enabled", False)),
+        "traffic_flow_enabled": bool(
+            analytics_cfg.get("enabled", False)
+            and analytics_cfg.get("flow", {}).get("enabled", False)
+        ),
+        "traffic_flow_window_s": analytics_cfg.get("flow", {}).get("window_s", 60.0),
         "analytics_coordinate_space": (
             "normalized_letterbox_canvas"
             if analytics_cfg.get("enabled", False)

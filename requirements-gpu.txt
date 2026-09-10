@@ -1,0 +1,8 @@
+# Tested Linux/WSL2 CUDA 13 runtime; install after requirements.txt.
+nvidia-cuda-runtime==13.0.96
+nvidia-cublas==13.1.1.3
+nvidia-cufft==12.0.0.61
+nvidia-curand==10.4.0.35
+nvidia-cusolver==12.0.4.66
+nvidia-cusparse==12.6.3.3
+nvidia-cudnn-cu13==9.20.0.48

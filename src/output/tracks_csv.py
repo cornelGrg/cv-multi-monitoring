@@ -31,12 +31,27 @@ class TracksCsvWriter:
         "center_y",
     ]
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, frames_path: str | Path | None = None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file: TextIO = self.path.open("w", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(self._file, fieldnames=self.FIELDNAMES)
         self._writer.writeheader()
+        self._frames_file = None
+        if frames_path is not None:
+            frames_path = Path(frames_path)
+            frames_path.parent.mkdir(parents=True, exist_ok=True)
+            self._frames_file = frames_path.open("w", newline="", encoding="utf-8")
+            self._frames_writer = csv.writer(self._frames_file)
+            self._frames_writer.writerow(["camera_id", "source_frame_id", "timestamp_ms"])
+
+    def write_frame(self, packet, tracks: Iterable[Track]) -> None:
+        """Record processed frames even when no vehicles are tracked."""
+        if self._frames_file is not None:
+            self._frames_writer.writerow([
+                packet.camera_id, packet.source_frame_id, packet.source_timestamp_ms,
+            ])
+        self.write(tracks)
 
     def write(self, tracks: Iterable[Track]) -> None:
         for track in tracks:
@@ -62,6 +77,8 @@ class TracksCsvWriter:
             )
 
     def close(self) -> None:
+        if self._frames_file is not None and not self._frames_file.closed:
+            self._frames_file.close()
         if not self._file.closed:
             self._file.flush()
             self._file.close()

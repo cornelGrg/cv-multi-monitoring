@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 from src.tracking.bytetrack import Track, VEHICLE_CLASSES
+from .traffic_flow import FlowSnapshot, RollingTrafficFlow
 
 Point = tuple[float, float]
 
@@ -262,6 +263,7 @@ class OverlayLine:
     lane_label: str
     count_total: int
     counts_by_class: tuple[tuple[str, int], ...]
+    flow: FlowSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -274,6 +276,8 @@ class AnalyticsOverlay:
 class AnalyticsFrameResult:
     events: tuple[LineCrossingEvent, ...]
     overlay: AnalyticsOverlay
+    flow: tuple[FlowSnapshot, ...] = ()
+    flow_sample_due: bool = False
 
 
 @dataclass
@@ -302,6 +306,7 @@ class PerCameraTrafficAnalytics:
         canvas_height: int,
         state_ttl_ms: float = 10_000.0,
         side_epsilon: float = 0.0005,
+        flow_config: dict | None = None,
     ) -> None:
         if canvas_width <= 0 or canvas_height <= 0:
             raise ValueError("analytics canvas dimensions must be positive")
@@ -316,6 +321,16 @@ class PerCameraTrafficAnalytics:
         self.side_epsilon = float(side_epsilon)
         self._states: dict[int, _TrackState] = {}
         self._counts: Counter[tuple[str, str, int]] = Counter()
+        flow_config = flow_config or {}
+        self._flow = (
+            RollingTrafficFlow(
+                config.camera_id,
+                {line.line_id: line.direction_label for line in config.lines},
+                window_s=float(flow_config.get("window_s", 60.0)),
+                sample_interval_s=float(flow_config.get("sample_interval_s", 1.0)),
+            )
+            if flow_config.get("enabled", False) else None
+        )
 
     def _track_point(self, track: Track) -> Point:
         return (
@@ -332,7 +347,8 @@ class PerCameraTrafficAnalytics:
         for track_id in stale_ids:
             del self._states[track_id]
 
-    def _overlay(self) -> AnalyticsOverlay:
+    def _overlay(self, flow: tuple[FlowSnapshot, ...] = ()) -> AnalyticsOverlay:
+        flow_by_line = {snapshot.line_id: snapshot for snapshot in flow}
         overlay_lines = []
         for line in self.config.lines:
             class_counts = tuple(
@@ -350,6 +366,7 @@ class PerCameraTrafficAnalytics:
                     lane_label=line.lane_label,
                     count_total=sum(count for _, count in class_counts),
                     counts_by_class=class_counts,
+                    flow=flow_by_line.get(line.line_id),
                 )
             )
         return AnalyticsOverlay(self.config.roi, tuple(overlay_lines))
@@ -459,7 +476,12 @@ class PerCameraTrafficAnalytics:
             state.source_frame_id = source_frame_id
             state.last_seen_timestamp_ms = source_timestamp_ms
 
-        return AnalyticsFrameResult(tuple(events), self._overlay())
+        flow, sample_due = (), False
+        if self._flow is not None:
+            flow, sample_due = self._flow.update(
+                events, source_frame_id=source_frame_id, timestamp_ms=source_timestamp_ms,
+            )
+        return AnalyticsFrameResult(tuple(events), self._overlay(flow), flow, sample_due)
 
 
 class MultiCameraTrafficAnalytics:
@@ -499,6 +521,7 @@ class MultiCameraTrafficAnalytics:
                 canvas_height=canvas_height,
                 state_ttl_ms=state_ttl_ms,
                 side_epsilon=side_epsilon,
+                flow_config=values.get("flow"),
             )
             for camera_id in camera_ids
         }

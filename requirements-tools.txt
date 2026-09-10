@@ -1,0 +1,4 @@
+# Optional model export, verification, and result plotting.
+onnx==1.22.0
+onnxslim==0.1.95
+matplotlib==3.11.1

@@ -184,6 +184,10 @@ class VideoAnnotator:
             raise RuntimeError(f"FFmpeg video writer failed: {stderr}") from exc
         self.frames_written += 1
 
+    def write_rendered_frame(self, frame: np.ndarray) -> None:
+        """Encode an already composed BGR frame without adding annotations."""
+        self._write(frame)
+
     def write_frame(self, frame: np.ndarray, detections: np.ndarray) -> None:
         """Annotate and write a single frame.
 
@@ -293,6 +297,13 @@ class VideoAnnotator:
             panel_lines.append(
                 f"{line.direction_label}{lane}: {line.count_total}{detail}"
             )
+            if line.flow is not None:
+                flow = line.flow
+                rate = f"{flow.vehicles_per_minute:.1f}" if flow.observed_window_s > 0 else "--"
+                status = " | warming up" if flow.warming_up else ""
+                panel_lines.append(
+                    f"  Flow: {rate} veh/min | {flow.window_s:g}s window{status}"
+                )
 
         if panel_lines:
             font = cv2.FONT_HERSHEY_SIMPLEX

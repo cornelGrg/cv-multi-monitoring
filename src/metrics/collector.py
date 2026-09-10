@@ -21,7 +21,7 @@ import logging
 import subprocess
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -110,6 +110,7 @@ class MetricsCollector:
         self._detection_confidences: list[float] = []
         self._detection_class_histogram: Counter[str] = Counter()
         self._analytics_counts: Counter[tuple[str, str, str, str]] = Counter()
+        self._latest_flow: dict[tuple[str, str], dict] = {}
 
         # Wall-clock bookkeeping
         self._start_ns: int = 0
@@ -213,6 +214,11 @@ class MetricsCollector:
                     event.class_name,
                 )
             ] += 1
+
+    def record_traffic_flow(self, snapshots: tuple) -> None:
+        """Keep only the latest rate per camera/gate, not an unbounded history."""
+        for snapshot in snapshots:
+            self._latest_flow[(snapshot.camera_id, snapshot.line_id)] = asdict(snapshot)
 
     def record_output_time(self, duration_s: float) -> None:
         """Record CSV plus annotated-video output time for one source frame."""
@@ -446,6 +452,7 @@ class MetricsCollector:
                 ),
             },
             "analytics": {
+                "flow": [self._latest_flow[key] for key in sorted(self._latest_flow)],
                 "total_line_crossing_events": self.total_line_crossing_events,
                 "counts": [
                     {

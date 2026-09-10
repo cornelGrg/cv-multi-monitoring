@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from src.analytics.line_crossing import MultiCameraTrafficAnalytics
 from src.capture.producer import FramePacket, VideoProducer
@@ -127,6 +128,11 @@ class PipelineOrchestrator:
         self._counts_file = analytics_cfg.get(
             "counts_file", "outputs/analytics/counts.csv"
         )
+        flow_cfg = analytics_cfg.get("flow", {})
+        self._flow_file = (
+            flow_cfg.get("file", str(Path(self._counts_file).with_name("flow.csv")))
+            if flow_cfg.get("enabled", False) else None
+        )
 
         self._barrier = threading.Barrier(len(config["streams"]) + 1) if (self._max_duration_s > 0 or self._loop_video) else None
 
@@ -200,11 +206,18 @@ class PipelineOrchestrator:
             logger.info("Configured stream %s → %s", camera_id, video_path)
 
         if self._tracking_enabled and self._write_tracks_csv:
-            self._tracks_writer = TracksCsvWriter(project_root / self._tracks_file)
+            tracks_path = project_root / self._tracks_file
+            self._tracks_writer = TracksCsvWriter(
+                tracks_path, frames_path=tracks_path.with_name("frames.csv"),
+            )
+            tracks_path.with_name("config_snapshot.yaml").write_text(
+                yaml.safe_dump(self.config, sort_keys=False), encoding="utf-8",
+            )
         if self._analytics_enabled and self._write_analytics_csv:
             self._analytics_writer = AnalyticsCsvWriter(
                 project_root / self._events_file,
                 project_root / self._counts_file,
+                project_root / self._flow_file if self._flow_file else None,
             )
         if self._tracking_enabled:
             logger.info(
@@ -328,6 +341,7 @@ class PipelineOrchestrator:
                     )
                     analytics_overlay = None
                     analytics_events = ()
+                    flow_samples = ()
                     if self._analytics is not None:
                         analytics_started = time.perf_counter()
                         analytics_result = self._analytics.update(
@@ -338,6 +352,9 @@ class PipelineOrchestrator:
                         )
                         analytics_events = analytics_result.events
                         analytics_overlay = analytics_result.overlay
+                        self.collector.record_traffic_flow(analytics_result.flow)
+                        if analytics_result.flow_sample_due:
+                            flow_samples = analytics_result.flow
                         self.collector.record_analytics_time(
                             time.perf_counter() - analytics_started,
                             analytics_events,
@@ -352,18 +369,20 @@ class PipelineOrchestrator:
                                 event.timestamp_ms,
                             )
                     tracked_frames.append(
-                        (packet, tracks, analytics_events, analytics_overlay, camera_detections)
+                        (packet, tracks, analytics_events, analytics_overlay, camera_detections, flow_samples)
                     )
                 self.collector.record_tracking_batch_time(
                     time.perf_counter() - tracking_batch_started
                 )
 
-                for packet, tracks, analytics_events, analytics_overlay, camera_detections in tracked_frames:
+                for packet, tracks, analytics_events, analytics_overlay, camera_detections, flow_samples in tracked_frames:
                     output_started = time.perf_counter()
                     if self._tracks_writer is not None:
-                        self._tracks_writer.write(tracks)
+                        self._tracks_writer.write_frame(packet, tracks)
                     if self._analytics_writer is not None:
                         self._analytics_writer.write(analytics_events)
+                        if flow_samples:
+                            self._analytics_writer.write_flow(flow_samples)
                     annotator = self._async_annotators.get(packet.camera_id)
                     if annotator is not None:
                         annotator.submit(

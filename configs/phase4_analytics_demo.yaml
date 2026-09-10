@@ -54,6 +54,11 @@ analytics:
   write_csv: true
   events_file: "outputs/phase4_demo/events.csv"
   counts_file: "outputs/phase4_demo/counts.csv"
+  flow:
+    enabled: true
+    window_s: 15.0
+    sample_interval_s: 1.0
+    file: "outputs/phase4_demo/flow.csv"
   cameras:
     # MVI_20011.  The concave left edge removes the bus shelter, stairs and
     # sidewalk.  The near/left carriageway travels down; the far/right one up.
@@ -161,7 +166,7 @@ analytics:
 manifest_file: "data/manifests/ua_detrac_selected.yaml"
 
 output:
-  show_detections: true  # Overlay accepted detections in cyan alongside yellow tracks.
+  show_detections: false  # Overlay accepted detections in cyan alongside yellow tracks.
   metrics_file: "outputs/phase4_demo/metrics.json"
   video_encoder: "h264_nvenc"
   log_level: "INFO"
