@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic · Live monitor</title>
+<link rel="icon" href="data:,">
+<style>
+:root { color-scheme: light; --ink:#182d35; --muted:#61737a; --line:#dce3e2; --green:#087e68; --amber:#b77620 }
+* { box-sizing:border-box }
+body { margin:0; background:#f3f5f2; color:var(--ink); font:14px/1.45 system-ui,sans-serif }
+main { max-width:1440px; margin:auto; padding:20px 28px 14px }
+header { display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:12px }
+.eyebrow { text-transform:uppercase; letter-spacing:.16em; font-size:10px; font-weight:750; color:var(--green) }
+h1 { font-size:26px; letter-spacing:-1px; margin:1px 0 3px; font-weight:650 }
+.subtitle, footer { color:var(--muted); font-size:12px }
+.tools { display:flex; align-items:center; gap:14px }
+.status { display:flex; align-items:center; gap:7px; font-size:12px; font-weight:600 }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--green) }
+body.offline .dot { background:var(--amber) }
+button { border:1px solid #cbd5d2; border-radius:7px; background:white; color:var(--ink); padding:9px 13px; cursor:pointer; font:inherit; font-size:12px }
+button:hover { background:#e8eeeb }
+button:focus-visible { outline:3px solid var(--green); outline-offset:3px }
+.summary { display:flex; gap:36px; padding:8px 0 12px; border-top:1px solid var(--line); margin-bottom:4px }
+.summary span { color:var(--muted); font-size:11px; display:block }
+.summary strong { font-size:21px; font-weight:600; font-variant-numeric:tabular-nums }
+.summary small { font-size:11px; font-weight:400; color:var(--muted) }
+.grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px }
+.camera { background:white; border:1px solid var(--line); border-radius:10px; overflow:hidden }
+.camera-head { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; gap:8px }
+h2 { display:inline; margin:0; font-size:13px; font-weight:650 }
+.sequence { margin-left:10px; color:var(--muted); font-size:10px }
+.camera-status { color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums }
+.feed { position:relative; background:#14242b }
+canvas { display:block; width:100%; height:auto; aspect-ratio:16/9; object-fit:contain }
+.waiting { position:absolute; inset:0; display:grid; place-items:center; color:#d3deda; font-size:12px }
+.waiting[hidden] { display:none }
+.camera.stale canvas, body.offline canvas { opacity:.45 }
+.metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); padding:8px 12px 9px; gap:16px }
+.direction + .direction { border-left:1px solid var(--line); padding-left:16px }
+.direction-title { color:var(--green); text-transform:uppercase; font-size:9px; font-weight:750; letter-spacing:.07em }
+.direction.away .direction-title { color:var(--amber) }
+.values { display:flex; align-items:baseline; gap:16px; margin-top:3px }
+.values .unit { display:block }
+.rate, .count { font-variant-numeric:tabular-nums; font-size:24px; font-weight:600; letter-spacing:-.6px }
+.count { font-size:18px }
+.unit { font-size:10px; color:var(--muted); letter-spacing:0; font-weight:400 }
+.warmup { min-height:13px; font-size:9px; color:var(--muted); margin-top:2px }
+footer { display:flex; justify-content:space-between; gap:12px; padding-top:12px; font-size:10px }
+.legend { display:flex; gap:16px }
+.legend span::before { content:''; display:inline-block; width:13px; height:2px; margin:0 5px 3px 0; background:var(--green) }
+.legend span:last-child::before { background:var(--amber) }
+@media(min-width:900px) {
+  main { max-width:min(1440px, calc((100dvh - 330px) * 1.7778 + 370px)) }
+  .camera { display:grid; grid-template-columns:minmax(0,1fr) 150px }
+  .camera-head { grid-column:1 / -1 }
+  .feed { align-self:center }
+  .metrics { grid-template-columns:1fr; align-content:center; gap:14px; padding:12px }
+  .direction + .direction { border-left:0; border-top:1px solid var(--line); padding:12px 0 0 }
+}
+@media(max-width:700px) { main { padding:18px 14px } .grid { grid-template-columns:1fr } header { align-items:flex-start } h1 { font-size:24px } .tools { flex-direction:column; gap:8px; align-items:flex-end } .summary { gap:24px } footer { flex-direction:column } .sequence { margin-left:6px } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div><div class="eyebrow">Multi-camera traffic analytics</div><h1>Live monitor</h1><div class="subtitle">Four independent scenes · Looped footage, processed live</div></div>
+  <div class="tools"><div class="status" role="status"><i class="dot"></i><span id="status">Connecting…</span></div><button id="fullscreen" type="button">Fullscreen ↗</button></div>
+</header>
+<section class="summary" aria-label="Session summary">
+  <div><span>Crossings this session</span><strong id="total">—</strong></div>
+  <div><span>Processing across cameras</span><strong id="fps">—</strong> <small>FPS</small></div>
+  <div><span>Flow window</span><strong id="window">—</strong> <small>seconds</small></div>
+  <div><span>Session time</span><strong id="uptime">00:00</strong></div>
+</section>
+<section class="grid" id="cameras" aria-label="Camera feeds"></section>
+<footer><div class="legend"><span>Toward camera</span><span>Away from camera</span></div><div>Counts accumulate across loops · Ctrl+C in the terminal to stop</div></footer>
+</main>
+<template id="camera-template">
+  <article class="camera">
+    <div class="camera-head"><div><h2></h2><span class="sequence"></span></div><span class="camera-status">Waiting for frames</span></div>
+    <div class="feed"><canvas width="640" height="360" role="img"></canvas><div class="waiting">Warming up inference…</div></div>
+    <div class="metrics"></div>
+  </article>
+</template>
+<script>
+const cards = new Map();
+const byId = id => document.getElementById(id);
+const clock = value => `${Math.floor(value / 60).toString().padStart(2, '0')}:${Math.floor(value % 60).toString().padStart(2, '0')}`;
+const color = line => line.direction === 'away_from_camera' ? '#ffc062' : '#50e4b1';
+
+function cardFor(camera) {
+  if (cards.has(camera.camera_id)) return cards.get(camera.camera_id);
+  const card = byId('camera-template').content.firstElementChild.cloneNode(true);
+  card.querySelector('h2').textContent = camera.camera_id.replace('_', ' ').toUpperCase();
+  card.querySelector('.sequence').textContent = camera.sequence;
+  card.querySelector('canvas').setAttribute('aria-label', `${camera.camera_id} live vehicle tracks and directional gates`);
+  byId('cameras').append(card);
+  cards.set(camera.camera_id, card);
+  return card;
+}
+
+async function drawCamera(camera) {
+  const card = cardFor(camera);
+  if (!camera.ready) return;
+  card.classList.toggle('stale', camera.age_s > 3);
+  card.querySelector('.camera-status').textContent = camera.age_s > 3
+    ? 'Feed stalled · last frame held'
+    : `${camera.fps.toFixed(1)} FPS · source ${clock(camera.source_seconds)}`;
+  if (card.dataset.frame === String(camera.frame_id)) return;
+  const image = new Image();
+  image.src = 'data:image/jpeg;base64,' + camera.image;
+  await image.decode();
+  const canvas = card.querySelector('canvas');
+  canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const point = p => [p[0] * canvas.width, p[1] * canvas.height];
+  ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  camera.roi.forEach((p, i) => i ? ctx.lineTo(...point(p)) : ctx.moveTo(...point(p)));
+  ctx.closePath(); ctx.stroke();
+  for (const track of camera.tracks) {
+    const [x, y] = point(track.p1), [x2, y2] = point(track.p2);
+    ctx.strokeStyle = '#ebf5d5'; ctx.lineWidth = 1.4;
+    ctx.strokeRect(x, y, x2 - x, y2 - y);
+    const label = `#${track.id}`;
+    ctx.font = '11px system-ui';
+    const lx = Math.max(2, Math.min(x, canvas.width - ctx.measureText(label).width - 6));
+    const ly = Math.max(13, y - 3);
+    ctx.fillStyle = '#14242bd9'; ctx.fillRect(lx - 2, ly - 11, ctx.measureText(label).width + 4, 14);
+    ctx.fillStyle = '#fff'; ctx.fillText(label, lx, ly);
+  }
+  for (const line of camera.lines) {
+    const [x, y] = point(line.p1), [x2, y2] = point(line.p2);
+    ctx.strokeStyle = color(line); ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x2, y2); ctx.stroke();
+    const sign = line.crossing_direction === 'positive_to_negative' ? -1 : 1;
+    const length = Math.hypot(x2 - x, y2 - y) || 1;
+    const nx = -(y2 - y) / length * sign, ny = (x2 - x) / length * sign;
+    const mx = (x + x2) / 2, my = (y + y2) / 2;
+    const ex = mx + nx * 22, ey = my + ny * 22;
+    ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(ex, ey);
+    ctx.moveTo(ex - nx * 7 + ny * 5, ey - ny * 7 - nx * 5); ctx.lineTo(ex, ey);
+    ctx.lineTo(ex - nx * 7 - ny * 5, ey - ny * 7 + nx * 5); ctx.stroke();
+  }
+  const metrics = card.querySelector('.metrics');
+  metrics.replaceChildren();
+  for (const line of camera.lines) {
+    const cell = document.createElement('div');
+    cell.className = 'direction' + (line.direction === 'away_from_camera' ? ' away' : '');
+    cell.innerHTML = '<div class="direction-title"></div><div class="values"><div><span class="rate"></span> <span class="unit">veh/min</span></div><div><span class="count"></span> <span class="unit">crossings</span></div></div><div class="warmup"></div>';
+    cell.querySelector('.direction-title').textContent = line.direction.replaceAll('_', ' ');
+    cell.querySelector('.rate').textContent = line.rate.toFixed(1);
+    cell.querySelector('.count').textContent = line.count;
+    cell.querySelector('.warmup').textContent = line.warming_up ? 'Window warming up' : 'Rolling traffic flow';
+    metrics.append(cell);
+  }
+  card.dataset.frame = camera.frame_id;
+  card.querySelector('.waiting').hidden = true;
+}
+
+async function refresh() {
+  try {
+    const response = await fetch('/api/state', {cache:'no-store', signal:AbortSignal.timeout(5000)});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    await Promise.all(data.cameras.map(drawCamera));
+    const ready = data.cameras.filter(c => c.ready);
+    byId('total').textContent = ready.length ? ready.reduce((sum, c) => sum + c.lines.reduce((n, l) => n + l.count, 0), 0) : '—';
+    byId('fps').textContent = ready.length ? ready.reduce((sum, c) => sum + c.fps, 0).toFixed(1) : '—';
+    byId('window').textContent = data.window_s;
+    byId('uptime').textContent = clock(data.uptime_s);
+    const stale = ready.some(c => c.age_s > 3);
+    byId('status').textContent = stale ? 'Waiting for fresh frames' : ready.length === data.cameras.length ? 'Processing live' : 'Warming up…';
+    document.body.classList.toggle('offline', stale);
+  } catch (error) {
+    byId('status').textContent = 'Disconnected · start the dashboard in your terminal';
+    byId('fps').textContent = '—';
+    document.body.classList.add('offline');
+  } finally {
+    setTimeout(refresh, 100);
+  }
+}
+byId('fullscreen').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (error) { byId('fullscreen').textContent = 'Use browser fullscreen'; }
+});
+document.addEventListener('fullscreenchange', () => {
+  byId('fullscreen').textContent = document.fullscreenElement ? 'Exit fullscreen ↙' : 'Fullscreen ↗';
+});
+refresh();
+</script>
+</body>
+</html>

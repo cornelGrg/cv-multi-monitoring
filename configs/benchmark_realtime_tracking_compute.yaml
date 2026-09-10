@@ -22,7 +22,6 @@ pipeline:
   loop_video: true
   max_duration_s: 60.0
   allowed_classes: [2, 3, 5, 7]
-  audit_frames: 0
 
 tracking:
   enabled: true

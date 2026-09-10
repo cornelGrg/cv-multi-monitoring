@@ -114,12 +114,6 @@ class OnnxGpuEngine:
         return self._output_meta.shape
 
     @property
-    def batch_size(self) -> int:
-        """Batch size baked into the model (first dim of input shape)."""
-        s = self._input_meta.shape[0]
-        return s if isinstance(s, int) else 1
-
-    @property
     def providers(self) -> list[str]:
         return self._session.get_providers()
 

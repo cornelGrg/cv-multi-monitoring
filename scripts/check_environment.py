@@ -89,7 +89,7 @@ def check(config_path, compare=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, default=ROOT / 'configs/phase4_analytics_demo.yaml')
+    parser.add_argument('--config', type=Path, default=ROOT / 'configs/default.yaml')
     parser.add_argument('--compare', type=Path)
     parser.add_argument('--report', type=Path, default=ROOT / 'artifacts/reproducibility/environment.json')
     args = parser.parse_args()

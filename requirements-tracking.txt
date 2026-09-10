@@ -1,6 +1,0 @@
-# Phase 3 ByteTrack runtime. Install after the project's base dependencies.
-ultralytics==8.4.115
-lap==0.5.13
-# Pin the tested Torch stack used by ByteTrack and model export.
-torch==2.13.0
-torchvision==0.28.0

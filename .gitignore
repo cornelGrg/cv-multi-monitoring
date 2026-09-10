@@ -17,15 +17,12 @@ dist/
 .idea/
 .antigravity-ide/
 .gemini/
-# Local documentation, planning, and experiments
-/docs/
+# Local historical evidence
 /artifacts/
-/utility_test/
 
 # Data and Archives
 /data/raw/
 /data/processed/
-/data/videos/
 
 # Model weights and TensorRT engines
 *.pt

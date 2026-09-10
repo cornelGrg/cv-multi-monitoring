@@ -498,7 +498,7 @@ class MultiCameraTrafficAnalytics:
         if not isinstance(values, dict):
             raise ValueError("analytics configuration must be a mapping")
         if values.get("normalized_coordinates", True) is not True:
-            raise ValueError("Phase 4 supports normalized analytics coordinates only")
+            raise ValueError("Only normalized analytics coordinates are supported")
         raw_cameras = values.get("cameras")
         if not isinstance(raw_cameras, dict):
             raise ValueError("analytics.cameras must be a mapping keyed by camera_id")

@@ -116,7 +116,7 @@ def _default_tracker_factory(config: ByteTrackConfig) -> Any:
         from ultralytics.trackers.byte_tracker import BYTETracker
     except ImportError as exc:  # pragma: no cover - exercised only in incomplete environments
         raise RuntimeError(
-            "Tracking requires the packages in requirements-tracking.txt "
+            "Tracking requires the packages in requirements.txt "
             "(ultralytics and lap)"
         ) from exc
     return BYTETracker(config.as_namespace())

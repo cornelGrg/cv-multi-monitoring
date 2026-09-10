@@ -4,14 +4,14 @@ Multi-Camera Real-Time Traffic Analytics Pipeline — entry point.
 Usage::
 
     python -m src.main                              # uses configs/default.yaml
-    python -m src.main --config configs/phase4_analytics_demo.yaml
+    python -m src.main --config configs/benchmark_realtime_detection_compute.yaml
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import yaml
@@ -19,14 +19,7 @@ import yaml
 from src.inference.engine import OnnxGpuEngine
 from src.metrics.collector import MetricsCollector
 from src.pipeline.orchestrator import PipelineOrchestrator
-
-
-VEHICLE_CLASS_NAMES = {
-    2: "car",
-    3: "motorcycle",
-    5: "bus",
-    7: "truck",
-}
+from src.tracking.bytetrack import VEHICLE_CLASSES
 
 
 def require_active_provider(engine: OnnxGpuEngine, inference_config: dict) -> None:
@@ -51,33 +44,16 @@ def load_config(path: str | Path) -> dict:
     with p.open() as f:
         config = yaml.safe_load(f)
 
-    # Load camera configs dynamically if directory is specified
-    if "cameras_config_dir" in config:
-        cam_dir = p.parent.parent / config["cameras_config_dir"]
-        streams = []
-        if cam_dir.exists():
-            for cam_file in sorted(cam_dir.glob("*.yaml")):
-                with cam_file.open() as cf:
-                    streams.append(yaml.safe_load(cf))
-        config["streams"] = streams
-        
-    # Load manifest if specified (overrides cameras_config_dir)
     if "manifest_file" in config:
         manifest_path = p.parent.parent / config["manifest_file"]
-        if manifest_path.exists():
-            with manifest_path.open() as mf:
-                manifest_data = yaml.safe_load(mf)
-                config["streams"] = manifest_data.get("cameras", [])
-                
-                # Map video_path to path for compatibility
-                for stream in config["streams"]:
-                    if "video_path" in stream and "path" not in stream:
-                        stream["path"] = stream["video_path"]
-                        
-                if "dataset" in manifest_data and "source_fps" in manifest_data["dataset"]:
-                    if "pipeline" not in config:
-                        config["pipeline"] = {}
-                    config["pipeline"]["source_fps"] = manifest_data["dataset"]["source_fps"]
+        with manifest_path.open() as mf:
+            manifest_data = yaml.safe_load(mf)
+        config["streams"] = manifest_data.get("cameras", [])
+        for stream in config["streams"]:
+            if "path" not in stream:
+                stream["path"] = stream["video_path"]
+        if "source_fps" in manifest_data.get("dataset", {}):
+            config.setdefault("pipeline", {})["source_fps"] = manifest_data["dataset"]["source_fps"]
 
     return config
 
@@ -91,8 +67,12 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def main(config_path: str = "configs/default.yaml") -> None:
+def main(config_path: str = "configs/default.yaml", *, dashboard_port: int | None = None) -> None:
     config = load_config(config_path)
+    if dashboard_port is not None:
+        from src.output.dashboard import dashboard_config
+
+        config = dashboard_config(config)
     setup_logging(config.get("output", {}).get("log_level", "INFO"))
 
     logger = logging.getLogger(__name__)
@@ -145,7 +125,7 @@ def main(config_path: str = "configs/default.yaml") -> None:
         "iou_threshold_configured": config["model"].get("iou_threshold"),
         "allowed_class_ids": allowed_class_ids,
         "allowed_class_names": [
-            VEHICLE_CLASS_NAMES.get(class_id, str(class_id))
+            VEHICLE_CLASSES.get(class_id, str(class_id))
             for class_id in allowed_class_ids
         ],
         "requested_provider": inf_cfg["provider"],
@@ -181,11 +161,26 @@ def main(config_path: str = "configs/default.yaml") -> None:
         config["model"]["confidence_threshold"],
         dict(zip(allowed_class_ids, run_metadata["allowed_class_names"])),
     )
-    collector = MetricsCollector(camera_ids, run_metadata=run_metadata)
+    collector = MetricsCollector(
+        camera_ids, run_metadata=run_metadata,
+        sample_limit=2000 if dashboard_port is not None else None,
+    )
 
     # ── Orchestrator ────────────────────────────────────────────────────
-    orchestrator = PipelineOrchestrator(config, engine, collector)
-    orchestrator.run()
+    dashboard_context = nullcontext()
+    if dashboard_port is not None:
+        from src.output.dashboard import DashboardServer
+
+        dashboard_context = DashboardServer(config, port=dashboard_port)
+    with dashboard_context as dashboard:
+        orchestrator = PipelineOrchestrator(
+            config, engine, collector,
+            frame_sink=dashboard.publish if dashboard is not None else None,
+        )
+        try:
+            orchestrator.run()
+        except KeyboardInterrupt:
+            logger.info("Stopped by user")
 
     # ── Results ─────────────────────────────────────────────────────────
     collector.print_summary()
@@ -205,5 +200,9 @@ if __name__ == "__main__":
         default="configs/default.yaml",
         help="Path to YAML config file (default: configs/default.yaml)",
     )
+    parser.add_argument("--dashboard", action="store_true", help="Serve a live browser demo of looping clips")
+    parser.add_argument("--port", type=int, default=8000, help="Dashboard localhost port (default: 8000)")
     args = parser.parse_args()
-    main(args.config)
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    main(args.config, dashboard_port=args.port if args.dashboard else None)

@@ -8,20 +8,13 @@ import cv2
 import numpy as np
 
 from src.analytics.line_crossing import AnalyticsOverlay
+from src.tracking.bytetrack import VEHICLE_CLASSES
 
 logger = logging.getLogger(__name__)
 
 _auto_encoders: dict[tuple[int, int], str] = {}
 _encoder_probe_results: dict[tuple[str, int, int], bool] = {}
 _encoder_lock = threading.RLock()
-
-# COCO labels for traffic classes
-COCO_CLASSES = {
-    2: "car",
-    3: "motorcycle",
-    5: "bus",
-    7: "truck",
-}
 
 
 def _probe_encoder(encoder: str, width: int, height: int) -> bool:
@@ -188,50 +181,6 @@ class VideoAnnotator:
         """Encode an already composed BGR frame without adding annotations."""
         self._write(frame)
 
-    def write_frame(self, frame: np.ndarray, detections: np.ndarray) -> None:
-        """Annotate and write a single frame.
-
-        detections: shape (N, 6) where each row is [x1, y1, x2, y2, conf, class_id]
-        """
-        # We need a writable copy if frame is read-only
-        annotated = frame.copy()
-
-        for det in detections:
-            x1, y1, x2, y2, conf, cls_id = det
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            cls_id = int(cls_id)
-
-            label = f"{COCO_CLASSES.get(cls_id, str(cls_id))} {conf:.2f}"
-
-            # Draw box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-            # Draw label background
-            (text_w, text_h), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-            )
-            cv2.rectangle(
-                annotated,
-                (x1, y1 - text_h - 4),
-                (x1 + text_w, y1),
-                (0, 255, 0),
-                -1,
-            )
-
-            # Draw text
-            cv2.putText(
-                annotated,
-                label,
-                (x1, y1 - 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 0),
-                1,
-                cv2.LINE_AA,
-            )
-
-        self._write(annotated)
-
     def _draw_analytics(
         self,
         frame: np.ndarray,
@@ -369,7 +318,7 @@ class VideoAnnotator:
             for x1, y1, x2, y2, confidence, class_id in detections:
                 x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 1)
-                label = f"D {COCO_CLASSES.get(int(class_id), str(int(class_id)))} {confidence:.2f}"
+                label = f"D {VEHICLE_CLASSES.get(int(class_id), str(int(class_id)))} {confidence:.2f}"
                 label_y = min(self.height - 3, max(12, y2 + 12))
                 label_x = max(0, min(x1, self.width - 130))
                 cv2.putText(annotated, label, (label_x, label_y),

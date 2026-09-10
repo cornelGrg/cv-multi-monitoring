@@ -35,7 +35,7 @@ class DetectionOverlayTests(unittest.TestCase):
         self.assertTrue(np.any(writer._write.call_args.args[0][-22:]))
 
     def test_toggle_routes_only_filtered_detections_to_their_camera(self) -> None:
-        config_path = Path(__file__).resolve().parents[1] / "configs/phase4_analytics_demo.yaml"
+        config_path = Path(__file__).resolve().parents[1] / "configs/default.yaml"
         for setting in (None, False, True):
             with self.subTest(show_detections=setting):
                 config = load_config(config_path)
@@ -54,7 +54,8 @@ class DetectionOverlayTests(unittest.TestCase):
                 ], dtype=np.float32)
                 engine = Mock()
                 engine.infer.return_value = (raw, 0.01)
-                pipeline = PipelineOrchestrator(config, engine, Mock())
+                sink = Mock()
+                pipeline = PipelineOrchestrator(config, engine, Mock(), frame_sink=sink)
                 for stream in config["streams"]:
                     cam = stream["camera_id"]
                     q = queue.Queue()
@@ -65,6 +66,11 @@ class DetectionOverlayTests(unittest.TestCase):
                     pipeline._trackers[cam] = tracker
                     pipeline._async_annotators[cam] = Mock()
                 pipeline._consumer_loop()
+                self.assertEqual(sink.call_count, 4)
+                for call, stream in zip(sink.call_args_list, config["streams"]):
+                    self.assertEqual(call.args[0].camera_id, stream["camera_id"])
+                    self.assertEqual(call.args[1], [])
+                    self.assertIsNone(call.args[2])
 
                 for i, stream in enumerate(config["streams"]):
                     cam = stream["camera_id"]

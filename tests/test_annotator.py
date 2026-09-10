@@ -13,9 +13,9 @@ from src.output.annotator import VideoAnnotator
 
 
 class VideoAnnotatorTests(unittest.TestCase):
-    def test_detection_audit_is_h264_avc1(self) -> None:
+    def test_rendered_video_is_h264_avc1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            output_path = Path(tmp) / "audit.mp4"
+            output_path = Path(tmp) / "rendered.mp4"
             annotator = VideoAnnotator(
                 output_path,
                 25.0,
@@ -24,11 +24,7 @@ class VideoAnnotatorTests(unittest.TestCase):
                 encoder="libx264",
             )
             frame = np.zeros((640, 640, 3), dtype=np.uint8)
-            detections = np.array(
-                [[10, 20, 100, 120, 0.9, 2]],
-                dtype=np.float32,
-            )
-            annotator.write_frame(frame, detections)
+            annotator.write_rendered_frame(frame)
             annotator.release()
 
             capture = cv2.VideoCapture(str(output_path))

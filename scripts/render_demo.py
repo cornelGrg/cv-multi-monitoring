@@ -56,7 +56,7 @@ def flow_rate(events, line_id, source_frame_id, timestamp_ms, start_ms, window_s
 
 
 class CameraReplay:
-    def __init__(self, camera, geometry, tracks, frames, events, size, source_fps, loop):
+    def __init__(self, camera, geometry, tracks, frames, events, size, loop):
         self.camera = camera
         self.geometry = geometry
         self.tracks = tracks
@@ -192,7 +192,7 @@ def render(run_dir, config_path, output, encoder='libx264', duration_s=None):
             cam = camera['camera_id']
             replays.append(CameraReplay(camera, config['analytics']['cameras'][cam],
                                         tracks[cam], list(frame_index[cam].values()), events[cam],
-                                        size, source_fps, config['pipeline'].get('loop_video', False)))
+                                        size, config['pipeline'].get('loop_video', False)))
         available_s = min(replay.timestamps[-1] / 1000 + 1 / source_fps for replay in replays)
         duration = min(duration_s, available_s) if duration_s is not None else available_s
         if duration <= 0:
@@ -230,8 +230,8 @@ def render(run_dir, config_path, output, encoder='libx264', duration_s=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--run-dir', type=Path, default=ROOT / 'outputs/phase4_demo')
-    parser.add_argument('--config', type=Path, default=ROOT / 'configs/phase4_analytics_demo.yaml')
+    parser.add_argument('--run-dir', type=Path, default=ROOT / 'outputs/demo')
+    parser.add_argument('--config', type=Path, default=ROOT / 'configs/default.yaml')
     parser.add_argument('--output', type=Path, help='Defaults to showcase.mp4 inside the run folder')
     parser.add_argument('--encoder', choices=['libx264', 'h264_nvenc', 'auto'], default='libx264')
     parser.add_argument('--duration', type=float, help='Optional source duration in seconds')

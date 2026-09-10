@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -25,14 +26,8 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
         self.tracking = yaml.safe_load(
             (PROJECT_ROOT / "configs/benchmark_realtime_tracking_compute.yaml").read_text()
         )
-        self.tracking_with_output = yaml.safe_load(
-            (PROJECT_ROOT / "configs/benchmark_realtime_tracking.yaml").read_text()
-        )
-        self.detection_with_audit = yaml.safe_load(
-            (PROJECT_ROOT / "configs/benchmark_realtime_constant_load.yaml").read_text()
-        )
-        self.phase4 = yaml.safe_load(
-            (PROJECT_ROOT / "configs/phase4_analytics_demo.yaml").read_text()
+        self.demo = yaml.safe_load(
+            (PROJECT_ROOT / "configs/default.yaml").read_text()
         )
 
     def test_controlled_pair_differs_only_in_tracking_and_metrics_path(self) -> None:
@@ -48,20 +43,8 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
         self.assertTrue(self.detection["inference"]["require_provider"])
         self.assertEqual(self.detection["inference"]["provider"], "CUDAExecutionProvider")
 
-    def test_tracking_output_benchmark_requires_gpu_inference_and_encoding(self) -> None:
-        self.assertTrue(self.tracking_with_output["inference"]["require_provider"])
-        self.assertEqual(
-            self.tracking_with_output["output"]["video_encoder"], "h264_nvenc"
-        )
-
-    def test_detection_audit_requires_gpu_inference_and_encoding(self) -> None:
-        self.assertTrue(self.detection_with_audit["inference"]["require_provider"])
-        self.assertEqual(
-            self.detection_with_audit["output"]["video_encoder"], "h264_nvenc"
-        )
-
-    def test_phase4_demo_has_complete_per_camera_analytics_and_gpu_requirements(self) -> None:
-        loaded = load_config(PROJECT_ROOT / "configs/phase4_analytics_demo.yaml")
+    def test_default_demo_has_complete_per_camera_analytics_and_gpu_requirements(self) -> None:
+        loaded = load_config(PROJECT_ROOT / "configs/default.yaml")
         camera_ids = [stream["camera_id"] for stream in loaded["streams"]]
         analytics = MultiCameraTrafficAnalytics(
             loaded["analytics"],
@@ -70,10 +53,19 @@ class ControlledBenchmarkConfigTests(unittest.TestCase):
             canvas_height=loaded["model"]["input_size"],
         )
 
-        self.assertTrue(self.phase4["inference"]["require_provider"])
-        self.assertEqual(self.phase4["output"]["video_encoder"], "h264_nvenc")
+        self.assertTrue(self.demo["inference"]["require_provider"])
+        self.assertEqual(self.demo["output"]["video_encoder"], "h264_nvenc")
         self.assertEqual(analytics.camera_ids, tuple(camera_ids))
-        self.assertTrue(self.phase4["analytics"]["write_csv"])
+        self.assertTrue(self.demo["analytics"]["write_csv"])
+
+    def test_missing_manifest_reports_the_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-manifest.yaml"
+            config_path = Path(tmp) / "config.yaml"
+            config_path.write_text(yaml.safe_dump({"manifest_file": str(missing)}))
+            with self.assertRaises(FileNotFoundError) as error:
+                load_config(config_path)
+            self.assertEqual(Path(error.exception.filename), missing)
 
     def test_provider_check_rejects_cpu_fallback(self) -> None:
         config = {"provider": "CUDAExecutionProvider", "require_provider": True}

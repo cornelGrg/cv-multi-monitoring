@@ -10,6 +10,7 @@ ONNX Runtime, and ByteTrack.
 - Configurable road regions and directional crossing gates.
 - Traffic flow in vehicles/minute over a rolling 15-second window.
 - CSV events, performance metrics, annotated videos, and a four-camera showcase.
+- A local browser dashboard with live processing of the four looping clips.
 
 ```mermaid
 flowchart LR
@@ -27,13 +28,13 @@ direction. Queues discard older frames when processing falls behind.
 
 Tested on Ubuntu/WSL2 with Python 3.14.4 and an NVIDIA RTX 3060 (12 GB,
 driver 610.88). Install FFmpeg with `libx264`, `h264_nvenc`, and `ffprobe`.
-The lock file includes the tested Python packages, CUDA 13/cuDNN 9 libraries,
-export tools, and plotting dependencies.
+`requirements.txt` pins the complete tested environment: Python packages,
+CUDA 13/cuDNN 9 libraries, export tools, and plotting dependencies.
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-python -m pip install -r requirements-lock.txt
+python -m pip install -r requirements.txt
 ```
 
 Download the [YOLO26m weights](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt)
@@ -61,14 +62,17 @@ numbering and reuses verified outputs. The environment check verifies source
 reading, model interfaces, CUDA inference, and NVENC. Local preparation and clean
 environment setup were tested; Kaggle download requires external access.
 
-## Run the demo
+## Recorded showcase
 
 ```bash
-python -m src.main --config configs/phase4_analytics_demo.yaml
+python -m src.main
 python -m scripts.render_demo
 ```
 
-Watch `outputs/phase4_demo/showcase.mp4` for all four cameras, track IDs,
+The default configuration, `configs/default.yaml`, runs the full demo for 60 seconds. Use
+`--config <path>` to select another configuration.
+
+Watch `outputs/demo/showcase.mp4` for all four cameras, track IDs,
 directional gates, crossing totals, and flow. If the recorded run is current,
 run only the rendering command; it uses saved results without repeating inference.
 
@@ -81,6 +85,36 @@ replaces those outputs; generated data stays out of Git.
 Edit `analytics.flow.window_s` to change the flow window. Startup rates are marked
 as warming up. ROI and gate coordinates use the normalized 640×640 letterboxed
 image. Set `output.show_detections: true` for diagnostic detection boxes.
+
+## Live dashboard
+
+After setup, start the pipeline and open [localhost:8000](http://localhost:8000)
+in your browser:
+
+```bash
+source venv/bin/activate
+python -m src.main --dashboard
+```
+
+The dashboard shows all four looping clips with current track IDs, directional
+gates, crossing totals, and rolling vehicles/minute. Detections and counts are
+computed as the clips run. This is live processing of recorded footage; the
+scenes are independent. The existing CUDA setup is required, with no additional
+Python dependencies.
+
+It runs until **Ctrl+C** in the terminal. Counts accumulate across clip loops and
+reset when the process restarts; refreshing the browser preserves the session.
+The flow window and geometry come from `configs/default.yaml`. Warmup and stalled
+feeds are labeled, and the **Fullscreen** button expands the display.
+
+Use `python -m src.main --dashboard --port 8001` if port 8000 is occupied, then
+open `http://localhost:8001`. The server listens only on the local machine.
+
+Dashboard mode disables video and CSV recording and leaves the recorded showcase
+intact. On shutdown, it writes session metrics to `outputs/dashboard/metrics.json`.
+Timing and detection-distribution samples are limited to the latest 2,000 values
+for this long-running mode; crossing totals remain cumulative. The performance
+table below measures the recorded pipeline, not browser-dashboard performance.
 
 ## Results
 
@@ -125,7 +159,22 @@ python -m unittest discover -s tests -v
 ```
 
 Tests cover tracking, crossings, flow, replay, output, and reproducibility helpers.
-They run without GPU inference; video tests require FFmpeg and FFprobe.
+They run without GPU inference; video tests require FFmpeg and FFprobe, and the
+dashboard HTTP test requires permission to bind a localhost port.
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `src/` | Capture, inference, tracking, analytics, metrics, and output |
+| `configs/` | Default demo and detection/tracking compute benchmarks |
+| `scripts/` | Dataset setup, model export, checks, benchmarks, plots, and replay |
+| `tests/` | Automated behavior and regression tests |
+| `data/manifests/`, `assets/results/` | Input references and published results |
+| `assets/dashboard.html` | Self-contained browser dashboard |
+
+Datasets, model weights, generated `outputs/`, and local historical `artifacts/`
+are excluded from Git.
 
 ## Limitations
 

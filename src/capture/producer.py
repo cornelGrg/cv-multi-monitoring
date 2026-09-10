@@ -14,7 +14,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -54,12 +54,6 @@ class FramePacket:
     source_timestamp_ms: float   # timestamp on the simulated source timeline
     capture_time_ns: int        # time.perf_counter_ns() at capture
     tensor: np.ndarray          # (3, H, W) float32, preprocessed
-
-    @property
-    def frame_idx(self) -> int:
-        """Backward-compatible alias for code written before Phase 3."""
-        return self.source_frame_id
-
 
 def letterbox(frame: np.ndarray, input_size: int = 640) -> np.ndarray:
     """Letterbox resize + normalise: BGR uint8 → CHW float32 [0, 1]."""

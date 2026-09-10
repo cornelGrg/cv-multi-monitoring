@@ -8,8 +8,8 @@ Definitions
 -----------
 - **FPS (global)**: total frames processed / elapsed wall-clock seconds.
 - **FPS (per-camera)**: global FPS / number of active cameras.
-- **Latency end-to-end**: time from frame capture (``perf_counter_ns`` in
-  the producer) to the moment the inference result is available.
+- **Latency end-to-end**: time from frame capture through consumer processing
+  and output submission; excludes asynchronous encoding completion.
 - **Inference time**: wall-clock duration of ``session.run()``.
 - **Queue wait**: time a frame packet spends sitting in the queue.
 """
@@ -20,7 +20,7 @@ import json
 import logging
 import subprocess
 import time
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -53,14 +53,10 @@ class PerCameraMetrics:
 class _LatencyBucket:
     """Internal helper that accumulates timing samples for percentile calc."""
 
-    _samples: list[float] = field(default_factory=list)
+    _samples: list[float] | deque[float] = field(default_factory=list)
 
     def add(self, value_s: float) -> None:
         self._samples.append(value_s)
-
-    @property
-    def count(self) -> int:
-        return len(self._samples)
 
     def percentile(self, p: float) -> float:
         if not self._samples:
@@ -79,9 +75,15 @@ class MetricsCollector:
     ----------
     camera_ids:
         List of camera identifiers that will be tracked.
+    sample_limit:
+        Optional cap for distribution samples during live sessions. Totals remain
+        cumulative; finite benchmark runs retain all samples by default.
     """
 
-    def __init__(self, camera_ids: list[str], run_metadata: dict | None = None) -> None:
+    def __init__(
+        self, camera_ids: list[str], run_metadata: dict | None = None,
+        *, sample_limit: int | None = None,
+    ) -> None:
         self.camera_ids = list(camera_ids)
         self.run_metadata = dict(run_metadata or {})
         self.per_camera: dict[str, PerCameraMetrics] = {
@@ -95,19 +97,28 @@ class MetricsCollector:
         self.total_track_observations: int = 0
         self.total_line_crossing_events: int = 0
 
-        # Timing accumulators
-        self._inference_times = _LatencyBucket()
-        self._e2e_latencies = _LatencyBucket()
-        self._queue_waits = _LatencyBucket()
-        self._tracking_times = _LatencyBucket()
-        self._tracking_batch_times = _LatencyBucket()
-        self._analytics_times = _LatencyBucket()
-        self._output_times = _LatencyBucket()
-        self._video_worker_times = _LatencyBucket()
-        self._batch_sizes: list[int] = []
-        self._queue_sizes: dict[str, list[int]] = {cid: [] for cid in camera_ids}
-        self._detection_counts: list[int] = []
-        self._detection_confidences: list[float] = []
+        # Live sessions retain recent samples; benchmark runs retain every sample.
+        if sample_limit is not None and sample_limit < 1:
+            raise ValueError("sample_limit must be positive")
+        if sample_limit is not None:
+            self.run_metadata["metrics_sample_limit"] = sample_limit
+
+        def samples():
+            return [] if sample_limit is None else deque(maxlen=sample_limit)
+
+        self._inference_times = _LatencyBucket(samples())
+        self._e2e_latencies = _LatencyBucket(samples())
+        self._queue_waits = _LatencyBucket(samples())
+        self._tracking_times = _LatencyBucket(samples())
+        self._tracking_batch_times = _LatencyBucket(samples())
+        self._analytics_times = _LatencyBucket(samples())
+        self._output_times = _LatencyBucket(samples())
+        self._video_worker_times = _LatencyBucket(samples())
+        self._batch_sizes: Counter[int] = Counter()
+        self._queue_sizes = {cid: samples() for cid in camera_ids}
+        self._detection_counts = samples()
+        self._detection_frames_seen = 0
+        self._detection_confidences = samples()
         self._detection_class_histogram: Counter[str] = Counter()
         self._analytics_counts: Counter[tuple[str, str, str, str]] = Counter()
         self._latest_flow: dict[tuple[str, str], dict] = {}
@@ -159,7 +170,7 @@ class MetricsCollector:
             if cam:
                 cam.frames_inferred += 1
 
-            # End-to-end latency: capture → inference done
+            # End-to-end latency: capture through consumer output submission
             e2e_s = (now_ns - cap_ns) / 1e9
             self._e2e_latencies.add(e2e_s)
 
@@ -169,7 +180,7 @@ class MetricsCollector:
 
             self.total_frames_inferred += 1
 
-        self._batch_sizes.append(true_batch_size)
+        self._batch_sizes[true_batch_size] += 1
 
     def record_queue_size(self, camera_id: str, size: int) -> None:
         """Snapshot current queue size for a camera."""
@@ -180,6 +191,7 @@ class MetricsCollector:
         """Record post-filter detection counts, confidences and class IDs."""
         for detections in detections_by_frame:
             self._detection_counts.append(len(detections))
+            self._detection_frames_seen += 1
             if len(detections) == 0:
                 continue
             self._detection_confidences.extend(
@@ -195,7 +207,7 @@ class MetricsCollector:
         self.total_track_observations += track_observations
 
     def record_tracking_batch_time(self, duration_s: float) -> None:
-        """Record wall-clock time from submitting through joining a tracker batch."""
+        """Record wall-clock time for a batch of sequential tracker/analytics updates."""
         self._tracking_batch_times.add(duration_s)
 
     def record_analytics_time(self, duration_s: float, events: list | tuple = ()) -> None:
@@ -239,15 +251,6 @@ class MetricsCollector:
             cam.frames_dropped = dropped
             cam.read_errors = errors
             cam.active_duration_s = active_duration_s
-
-    def sync_synchronous_video_output(self, camera_id: str, frames_written: int) -> None:
-        """Record bounded synchronous audit output using the common video counters."""
-        cam = self.per_camera.get(camera_id)
-        if cam is None:
-            return
-        cam.video_frames_submitted = frames_written
-        cam.video_frames_written = frames_written
-        cam.video_frames_dropped = 0
 
     def sync_video_output_stats(self, camera_id: str, stats: object) -> None:
         """Copy final asynchronous video counters after its worker has stopped."""
@@ -366,7 +369,7 @@ class MetricsCollector:
         detection_confidences = self._detection_confidences
         histogram_upper = max(4, max(self._batch_sizes, default=0))
         batch_size_hist = {
-            str(size): self._batch_sizes.count(size)
+            str(size): self._batch_sizes[size]
             for size in range(1, histogram_upper + 1)
         }
 
@@ -415,7 +418,7 @@ class MetricsCollector:
                 "num_cameras": len(self.camera_ids),
             },
             "detection_audit": {
-                "frames_observed": len(detection_counts),
+                "frames_observed": self._detection_frames_seen,
                 "detections_per_frame_avg": round(
                     float(np.mean(detection_counts)) if detection_counts else 0.0,
                     2,

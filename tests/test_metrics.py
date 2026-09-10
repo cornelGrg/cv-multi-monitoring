@@ -9,11 +9,12 @@ import numpy as np
 
 from src.capture.producer import CameraStats
 from src.metrics.collector import MetricsCollector
+from src.output.async_annotator import AsyncVideoStats
 
 
 class MetricsCollectorTests(unittest.TestCase):
     @patch.object(MetricsCollector, "_get_vram_mb", return_value=123.0)
-    def test_phase3_report_contains_audit_and_active_camera_metrics(
+    def test_report_contains_audit_and_active_camera_metrics(
         self,
         _mock_vram: object,
     ) -> None:
@@ -46,8 +47,9 @@ class MetricsCollectorTests(unittest.TestCase):
         collector._end_ns = collector._start_ns + 2_000_000_000
         collector.sync_producer_stats("cam_01", 50, 4, 0, active_duration_s=2.0)
         collector.sync_producer_stats("cam_02", 50, 4, 0, active_duration_s=2.0)
-        collector.sync_synchronous_video_output("cam_01", 1)
-        collector.sync_synchronous_video_output("cam_02", 1)
+        video_stats = AsyncVideoStats(1, 1, 0, 0.0, 0, 0.0, 0.0, ())
+        collector.sync_video_output_stats("cam_01", video_stats)
+        collector.sync_video_output_stats("cam_02", video_stats)
         collector.record_analytics_time(
             0.0002,
             (
@@ -90,6 +92,24 @@ class MetricsCollectorTests(unittest.TestCase):
             last_capture_time_ns=3_500_000_000,
         )
         self.assertEqual(stats.active_duration_s, 2.5)
+
+    @patch.object(MetricsCollector, "_get_vram_mb", return_value=None)
+    def test_live_samples_are_bounded_but_totals_remain_cumulative(self, _vram):
+        collector = MetricsCollector(["cam_01"], sample_limit=3)
+        for _ in range(10):
+            collector.record_detection_frames([np.array([[0, 0, 1, 1, .9, 2]])])
+            collector.record_queue_size("cam_01", 2)
+            collector.record_batch(["cam_01"], .01, [1], [2], 1, true_batch_size=1)
+        collector._start_ns, collector._end_ns = 1, 1_000_000_001
+        report = collector.to_dict()
+        self.assertEqual(report['global']['total_frames_inferred'], 10)
+        self.assertEqual(report['global']['batch_size_hist']['1'], 10)
+        self.assertEqual(report['detection_audit']['frames_observed'], 10)
+        self.assertEqual(report['detection_audit']['class_histogram_by_coco_id']['2'], 10)
+        self.assertEqual(len(collector._inference_times._samples), 3)
+        self.assertEqual(len(collector._queue_sizes['cam_01']), 3)
+        self.assertEqual(len(collector._detection_counts), 3)
+        self.assertEqual(len(collector._detection_confidences), 3)
 
 
 if __name__ == "__main__":

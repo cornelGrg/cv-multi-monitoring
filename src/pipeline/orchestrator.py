@@ -11,6 +11,7 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -21,14 +22,11 @@ from src.capture.producer import FramePacket, VideoProducer
 from src.inference.engine import OnnxGpuEngine
 from src.metrics.collector import MetricsCollector
 from src.output.async_annotator import AsyncVideoAnnotator
-from src.output.annotator import VideoAnnotator
 from src.output.analytics_csv import AnalyticsCsvWriter
 from src.output.tracks_csv import TracksCsvWriter
 from src.tracking.bytetrack import ByteTrackConfig, PerCameraByteTracker
 
 logger = logging.getLogger(__name__)
-
-CONF_THRESHOLD = 0.25  # default, overridden by config
 
 def filter_detections(output: np.ndarray, conf_threshold: float, allowed_classes: list[int]) -> list[np.ndarray]:
     """Filter detections by confidence and allowed classes.
@@ -66,15 +64,17 @@ class PipelineOrchestrator:
         config: dict,
         engine: OnnxGpuEngine,
         collector: MetricsCollector,
+        *,
+        frame_sink: Callable | None = None,
     ) -> None:
         self.config = config
         self.engine = engine
         self.collector = collector
+        self._frame_sink = frame_sink
 
         self._producers: list[VideoProducer] = []
         self._queues: list[queue.Queue] = []
         self._camera_ids: list[str] = []
-        self._annotators: dict[str, VideoAnnotator] = {}
         self._async_annotators: dict[str, AsyncVideoAnnotator] = {}
         self._trackers: dict[str, PerCameraByteTracker] = {}
         self._tracks_writer: TracksCsvWriter | None = None
@@ -87,16 +87,14 @@ class PipelineOrchestrator:
         self._drop_policy: str = pipeline_cfg.get("frame_drop_policy", "latest")
         self._source_fps: float | None = pipeline_cfg.get("source_fps", None)
 
-        # New Phase 2.1 properties
         self._allowed_classes = pipeline_cfg.get("allowed_classes", [2, 3, 5, 7])
         self._max_duration_s = pipeline_cfg.get("max_duration_s", 0.0)
         self._loop_video = pipeline_cfg.get("loop_video", False)
-        self._audit_frames = pipeline_cfg.get("audit_frames", 0)
 
         tracking_cfg = config.get("tracking", {})
         self._tracking_enabled = bool(tracking_cfg.get("enabled", False))
         if self._tracking_enabled and tracking_cfg.get("tracker_type", "bytetrack") != "bytetrack":
-            raise ValueError("Phase 3 supports tracker_type='bytetrack' only")
+            raise ValueError("Only tracker_type='bytetrack' is supported")
         self._write_tracked_video = bool(tracking_cfg.get("write_annotated_video", True))
         self._write_tracks_csv = bool(tracking_cfg.get("write_tracks_csv", True))
         self._video_queue_maxsize = int(tracking_cfg.get("video_queue_maxsize", 8))
@@ -173,17 +171,6 @@ class PipelineOrchestrator:
             self._queues.append(q)
             self._producers.append(p)
             self._camera_ids.append(camera_id)
-
-            if self._audit_frames > 0:
-                out_path = project_root / f"outputs/audit_{camera_id}.mp4"
-                fps = self._source_fps if self._source_fps else 25.0
-                self._annotators[camera_id] = VideoAnnotator(
-                    out_path,
-                    fps,
-                    self._input_size,
-                    self._input_size,
-                    encoder=self._video_encoder,
-                )
 
             if self._tracking_enabled:
                 self._trackers[camera_id] = PerCameraByteTracker(
@@ -291,11 +278,8 @@ class PipelineOrchestrator:
                     item.camera_id, self._queues[idx].qsize()
                 )
 
-            if len(packets) < num_streams and len(packets) == 0:
+            if not packets:
                 break  # All streams exhausted
-
-            if len(packets) == 0:
-                continue
 
             # Pad batch if fewer packets than batch_size
             # (only happens when some streams end early)
@@ -377,6 +361,8 @@ class PipelineOrchestrator:
 
                 for packet, tracks, analytics_events, analytics_overlay, camera_detections, flow_samples in tracked_frames:
                     output_started = time.perf_counter()
+                    if self._frame_sink is not None:
+                        self._frame_sink(packet, tracks, analytics_overlay)
                     if self._tracks_writer is not None:
                         self._tracks_writer.write_frame(packet, tracks)
                     if self._analytics_writer is not None:
@@ -393,20 +379,6 @@ class PipelineOrchestrator:
                             detections=camera_detections if self._show_detections else None,
                         )
                     self.collector.record_output_time(time.perf_counter() - output_started)
-
-            # Phase 2.1 audit path remains unchanged when tracking is disabled.
-            elif self._audit_frames > 0:
-                for i in range(true_batch_size):
-                    cam_id = packets[i].camera_id
-                    annotator = self._annotators.get(cam_id)
-                    if annotator and annotator.frames_written < self._audit_frames:
-                        output_started = time.perf_counter()
-                        # Reconstruct (640,640,3) BGR uint8 from (3,640,640) RGB float32
-                        disp = (packets[i].tensor.transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
-                        annotator.write_frame(disp, filtered[i])
-                        self.collector.record_output_time(
-                            time.perf_counter() - output_started
-                        )
 
             # Record metrics
             self.collector.record_batch(
@@ -476,12 +448,6 @@ class PipelineOrchestrator:
             finally:
                 stats = annotator.stats()
                 self.collector.sync_video_output_stats(camera_id, stats)
-        for camera_id, ann in self._annotators.items():
-            ann.release()
-            self.collector.sync_synchronous_video_output(
-                camera_id,
-                ann.frames_written,
-            )
         if self._tracks_writer is not None:
             self._tracks_writer.close()
         if self._analytics_writer is not None:

@@ -24,7 +24,7 @@ from scripts.provenance import environment, sha256
 BENCHMARKS = {
     'detection_compute': PROJECT_ROOT / 'configs/benchmark_realtime_detection_compute.yaml',
     'tracking_compute': PROJECT_ROOT / 'configs/benchmark_realtime_tracking_compute.yaml',
-    'full_pipeline': PROJECT_ROOT / 'configs/phase4_analytics_demo.yaml',
+    'full_pipeline': PROJECT_ROOT / 'configs/default.yaml',
 }
 
 
